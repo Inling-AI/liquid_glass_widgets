@@ -9,6 +9,8 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import '../../constants/glass_defaults.dart';
 import '../../src/engine/internal/transform_tracking_repaint_boundary_mixin.dart';
+import '../../src/renderer/glass_backdrop_group.dart';
+import '../../src/renderer/glass_backdrop_group_boundary.dart';
 import '../../src/renderer/liquid_glass_renderer.dart';
 import '../../theme/glass_theme.dart';
 
@@ -475,6 +477,7 @@ class _LightweightLiquidGlassState extends State<LightweightLiquidGlass>
       settings: settings,
       shape: widget.shape,
       skipBlur: skipBlur,
+      backdropKey: GlassBackdropGroup.standardKeyOf(context),
       glowIntensity: widget.glowIntensity,
       densityFactor: widget.densityFactor,
       indicatorWeight: widget.indicatorWeight,
@@ -513,6 +516,7 @@ class _LightweightGlassEffect extends SingleChildRenderObjectWidget {
     required this.settings,
     required this.shape,
     required this.skipBlur,
+    required this.backdropKey,
     required this.glowIntensity,
     required this.densityFactor,
     required this.indicatorWeight,
@@ -526,6 +530,7 @@ class _LightweightGlassEffect extends SingleChildRenderObjectWidget {
   final LiquidGlassSettings settings;
   final LiquidShape shape;
   final bool skipBlur;
+  final BackdropKey? backdropKey;
   final double glowIntensity;
   final double densityFactor;
   final double indicatorWeight;
@@ -540,6 +545,7 @@ class _LightweightGlassEffect extends SingleChildRenderObjectWidget {
       settings: settings,
       shape: shape,
       skipBlur: skipBlur,
+      backdropKey: backdropKey,
       glowIntensity: glowIntensity,
       densityFactor: densityFactor,
       indicatorWeight: indicatorWeight,
@@ -559,6 +565,7 @@ class _LightweightGlassEffect extends SingleChildRenderObjectWidget {
       ..settings = settings
       ..shape = shape
       ..skipBlur = skipBlur
+      ..backdropKey = backdropKey
       ..glowIntensity = glowIntensity
       ..densityFactor = densityFactor
       ..indicatorWeight = indicatorWeight
@@ -575,6 +582,7 @@ class _RenderLightweightGlass extends RenderProxyBox
     required LiquidGlassSettings settings,
     required LiquidShape shape,
     required bool skipBlur,
+    required BackdropKey? backdropKey,
     required double glowIntensity,
     required double densityFactor,
     required double indicatorWeight,
@@ -585,6 +593,7 @@ class _RenderLightweightGlass extends RenderProxyBox
         _settings = settings,
         _shape = shape,
         _skipBlur = skipBlur,
+        _backdropKey = backdropKey,
         _glowIntensity = glowIntensity,
         _densityFactor = densityFactor,
         _indicatorWeight = indicatorWeight,
@@ -657,6 +666,13 @@ class _RenderLightweightGlass extends RenderProxyBox
     if (wasCompositing != alwaysNeedsCompositing) {
       markNeedsCompositingBitsUpdate();
     }
+    markNeedsPaint();
+  }
+
+  BackdropKey? _backdropKey;
+  set backdropKey(BackdropKey? value) {
+    if (_backdropKey == value) return;
+    _backdropKey = value;
     markNeedsPaint();
   }
 
@@ -803,7 +819,11 @@ class _RenderLightweightGlass extends RenderProxyBox
       );
 
       context.pushLayer(
-        BackdropFilterLayer(filter: filter),
+        BackdropFilterLayer(filter: filter)
+          ..backdropKey = _backdropKey != null &&
+                  enclosingBackdropGroup(this) != null
+              ? _backdropKey
+              : null,
         (context, offset) {
           _paintGlassContent(context, offset);
         },

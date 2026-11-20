@@ -2,7 +2,7 @@ import 'package:flutter/widgets.dart';
 
 import 'glass_backdrop_group_boundary.dart';
 
-/// Premium glass surfaces that read the backdrop together, in one pass.
+/// Glass surfaces that read the backdrop together.
 ///
 /// On Impeller every [BackdropFilter] ends the render pass and copies the
 /// whole screen before it runs, however small the glass. Premium glass has
@@ -54,12 +54,12 @@ import 'glass_backdrop_group_boundary.dart';
 /// A group with a single surface in it changes nothing. Without Impeller
 /// (web, Skia) the group has no effect.
 class GlassBackdropGroup extends StatefulWidget {
-  /// Lets the premium glass in [child] read the backdrop together, or, with
-  /// [enabled] false, keeps it out of any group further up.
+  /// Lets the glass in [child] share a backdrop read.
   const GlassBackdropGroup({
     required this.child,
     this.enabled = true,
     this.joinEnclosing = false,
+    this.groupStandardBackdrop = false,
     super.key,
   });
 
@@ -77,11 +77,20 @@ class GlassBackdropGroup extends StatefulWidget {
   /// group.
   final bool joinEnclosing;
 
+  /// Allows side-by-side Standard surfaces in this group to share their
+  /// backdrop. Use separate groups for surfaces whose filter regions overlap.
+  final bool groupStandardBackdrop;
+
   /// The key the premium glass under [context] shares its backdrop read
   /// through, or null outside a [GlassBackdropGroup] or inside a disabled one.
   static BackdropKey? keyOf(BuildContext context) => context
       .dependOnInheritedWidgetOfExactType<_GlassBackdropGroupScope>()
       ?.backdropKey;
+
+  /// Shared backdrop for eligible Standard surfaces in the nearest group.
+  static BackdropKey? standardKeyOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<_GlassBackdropGroupScope>()
+      ?.standardBackdropKey;
 
   @override
   State<GlassBackdropGroup> createState() => _GlassBackdropGroupState();
@@ -89,6 +98,7 @@ class GlassBackdropGroup extends StatefulWidget {
 
 class _GlassBackdropGroupState extends State<GlassBackdropGroup> {
   final BackdropKey _key = BackdropKey();
+  late final BackdropKey _standardKey = BackdropKey();
 
   @override
   Widget build(BuildContext context) {
@@ -97,6 +107,8 @@ class _GlassBackdropGroupState extends State<GlassBackdropGroup> {
         : null;
     return _GlassBackdropGroupScope(
       backdropKey: widget.enabled ? enclosing ?? _key : null,
+      standardBackdropKey:
+          widget.enabled && widget.groupStandardBackdrop ? _standardKey : null,
       // Always there, so switching [enabled] or joining keeps the subtree's
       // state. A boundary that joins lets its members walk on up.
       child: GlassBackdropGroupBoundary(
@@ -110,12 +122,15 @@ class _GlassBackdropGroupState extends State<GlassBackdropGroup> {
 class _GlassBackdropGroupScope extends InheritedWidget {
   const _GlassBackdropGroupScope({
     required this.backdropKey,
+    required this.standardBackdropKey,
     required super.child,
   });
 
   final BackdropKey? backdropKey;
+  final BackdropKey? standardBackdropKey;
 
   @override
   bool updateShouldNotify(_GlassBackdropGroupScope oldWidget) =>
-      backdropKey != oldWidget.backdropKey;
+      backdropKey != oldWidget.backdropKey ||
+      standardBackdropKey != oldWidget.standardBackdropKey;
 }
