@@ -118,6 +118,7 @@ export 'widgets/overlays/glass_dialog.dart';
 export 'widgets/overlays/glass_full_screen_cover.dart';
 export 'widgets/overlays/glass_menu.dart';
 export 'widgets/overlays/glass_menu_item.dart';
+export 'widgets/overlays/shared/glass_menu_morph.dart';
 export 'widgets/overlays/glass_sheet.dart';
 export 'widgets/overlays/glass_modal_sheet.dart'
     show

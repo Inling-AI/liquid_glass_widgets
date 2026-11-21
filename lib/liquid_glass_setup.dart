@@ -15,6 +15,7 @@ import 'widgets/shared/glass_effect.dart';
 import 'widgets/shared/glass_accessibility_scope.dart';
 import 'widgets/shared/lightweight_liquid_glass.dart';
 import 'widgets/effects/progressive_blur.dart';
+import 'widgets/overlays/shared/glass_menu_morph.dart';
 
 /// Entry point and configuration for the Liquid Glass Widgets library.
 ///
@@ -114,6 +115,7 @@ class LiquidGlassWidgets {
       LightweightLiquidGlass.preWarm(),
       GlassEffect.preWarm(),
       ProgressiveBlur.preload(),
+      GlassMenuMorphContent.preload(),
     ];
 
     // On platforms that support premium glass rendering (iOS Metal, macOS Metal,

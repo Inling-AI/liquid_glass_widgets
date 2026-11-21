@@ -218,21 +218,31 @@ class GlassMorphController extends ChangeNotifier {
 
   /// Opens the morph animation from the current position.
   ///
-  /// Resets the handoff latch and runs the spring toward `1.0` from rest.
+  /// Resets the handoff latch and runs the spring toward `1.0`.
+  /// A supplied [simulation] drives the opening motion when animations are enabled.
   /// Safe to call while the close animation is still running.
-  void open() {
+  void open({Simulation? simulation}) {
     _isClosing = false;
     _hasHandedOff = false;
-    _runSpring(1.0, velocityHint: 0.0);
+    if (simulation == null || _disableAnimations) {
+      _runSpring(1.0, velocityHint: 0.0);
+    } else {
+      _animationController.animateWith(simulation);
+    }
   }
 
   /// Closes the morph animation with the iOS 26 rubber-band bounce.
   ///
   /// Injects [LiquidMorphPhysics.closeVelocityHint] to immediately drive the
   /// spring toward zero with momentum, creating the satisfying "snap-back" feel.
-  void close() {
+  /// A supplied [simulation] drives the closing motion when animations are enabled.
+  void close({Simulation? simulation}) {
     _isClosing = true;
-    _runSpring(0.0, velocityHint: LiquidMorphPhysics.closeVelocityHint);
+    if (simulation == null || _disableAnimations) {
+      _runSpring(0.0, velocityHint: LiquidMorphPhysics.closeVelocityHint);
+    } else {
+      _animationController.animateBackWith(simulation);
+    }
   }
 
   /// Immediately resets the controller to its resting closed state (value = 0.0,

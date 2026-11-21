@@ -1,5 +1,9 @@
 # 1.17.5
 
+## Menu motion
+
+- **`GlassMenu` motion:** A glass lens travels from the trigger and settles into the menu with a spring. Text and icons sharpen in place, with transient perimeter refraction on Impeller. Dismissal releases the foreground and backdrop blur as the lens dips, then contracts through a narrow glass connection into the returning trigger.
+
 ## Bug Fixes
 
 - **`GlassDialog`, `showGlassActionSheet`, and `GlassQuality.standard` / `minimal` materialize transitions (PR #491, #492):** Eliminates the fade-in backdrop blur pop by dissolving alert platters and `standard` / `minimal` glass without an ancestor `OpacityLayer`, preserves child focus/state across transitions, and calibrates `GlassQuality.standard` alert legibility on `ios26` / `ios27`.

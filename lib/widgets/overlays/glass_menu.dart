@@ -14,8 +14,8 @@ import '../../constants/glass_defaults.dart';
 import '../../types/glass_quality.dart';
 import '../../types/glass_style.dart';
 import '../containers/glass_container.dart';
-import '../shared/adaptive_liquid_glass_layer.dart';
 import 'glass_menu_item.dart';
+import 'shared/glass_menu_morph.dart';
 import '../../theme/glass_theme_helpers.dart';
 import '../../theme/glass_theme.dart';
 import '../shared/glass_accessibility_scope.dart';
@@ -66,19 +66,9 @@ enum GlassMenuAlignment {
 
 /// A liquid glass context menu that morphs from its trigger button.
 ///
-/// [GlassMenu] implements the iOS 26 "liquid glass" morphing pattern where
-/// a button seamlessly transforms into a menu. The same glass container
-/// transitions between button and menu states using spring physics.
-///
-/// ## Features
-/// - **True morphing**: Button transforms into menu (not overlay)
-/// - **Smooth spring physics**: Gentle settle with no harsh bounces (stiffness: 300, damping: 24)
-/// - **Liquid swoop**: Subtle 5px parabolic arc for seamless down-and-up motion
-/// - **Seamless crossfade**: Button only appears at final 5% to preserve morph illusion
-/// - **Dimension interpolation**: Width, height, and border radius morph smoothly
-/// - **Position aware**: Menu expands from button position
-/// - **Settings inheritance**: Inherits parent layer settings like GlassContainer.card (thin rim by default)
-/// - **No button animation**: Trigger button remains static, only shape morphs
+/// A spring carries a glass lens from the trigger into the menu bounds.
+/// The lens develops backdrop blur during the flight, then reveals the menu
+/// content with progressively sharper text and icons.
 class GlassMenu extends StatefulWidget {
   /// The widget that triggers the menu.
   ///
@@ -281,24 +271,13 @@ class GlassMenu extends StatefulWidget {
   /// everything and swallows all input. Pairs with [controller]-driven open/close.
   final bool showDismissBarrier;
 
-  /// Whether the open/close morph blooms from a zero-size point at the trigger
-  /// center instead of from a glass blob the size of the trigger. Defaults to
-  /// `false` (the menu spawns as a small rounded "metaball" matching the trigger
-  /// and morphs outward — the standard iOS-26 liquid-glass behavior).
+  /// Starts and ends the morph at a point at the trigger center.
   ///
-  /// Set to `true` when the trigger is invisible or zero-sized (e.g. an
-  /// imperatively-driven menu positioned by an external gesture owner via
-  /// [controller]), so there is no button for the spawn blob to grow from. In
-  /// that case the trigger ghost (Blob A) is suppressed entirely and the menu
-  /// body lerps its size from 0 → full while keeping the identical teardrop
-  /// shape morph (radius circle→rounded-rect, J-curve travel, and spring). The
-  /// shape still spawns at — and collapses back to — the trigger center, so a
-  /// zero-sized trigger reads as a point bloom rather than an 8px glass dot.
+  /// Enable this for an invisible trigger driven by [controller].
   final bool morphFromZero;
 
   /// When true (typically for iOS PlatformViews), forces the BackdropFilter
-  /// fallback render path instead of the Impeller-native shader. Forwarded to
-  /// the underlying [AdaptiveLiquidGlassLayer].
+  /// fallback render path in the underlying [GlassContainer].
   final bool platformViewBackdrop;
 
   /// Speed profile for the open/close morph animation.
