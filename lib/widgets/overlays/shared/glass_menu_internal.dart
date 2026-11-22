@@ -144,18 +144,10 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
         if (SchedulerBinding.instance.schedulerPhase ==
             SchedulerPhase.persistentCallbacks) {
           SchedulerBinding.instance.addPostFrameCallback((_) {
-            if (mounted && _overlayController.isShowing) {
-              _overlayController.hide();
-              _horizontalOffset = 0.0;
-              _verticalOffset = 0.0;
-            }
+            if (mounted) _hideOverlay();
           });
         } else {
-          _overlayController.hide();
-          // Reset screen-edge clamping offsets so stale values from a previous
-          // open position don't bleed into the next open cycle.
-          _horizontalOffset = 0.0;
-          _verticalOffset = 0.0;
+          _hideOverlay();
         }
       }
     });
@@ -277,9 +269,10 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
       return;
     }
     final wasClosing = _morphController.isClosing;
-    if (_overlayController.isShowing) {
-      _overlayController.hide();
+    if (!wasClosing) {
+      widget.onClose?.call();
     }
+    _hideOverlay();
     _morphController.reset();
     _horizontalOffset = 0.0;
     _verticalOffset = 0.0;
@@ -293,9 +286,6 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     _swipeArmed = false;
     _openedOnPointerDown = false;
     _resetSubmenus();
-    if (!wasClosing) {
-      widget.onClose?.call();
-    }
     if (mounted) {
       setState(() {});
     }
@@ -309,12 +299,20 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
         final rawValue = _morphController.value;
 
         // Block trigger taps while menu is significantly open.
-        final isMenuBlocking = _overlayController.isShowing && rawValue > 0.8;
+        final isMenuBlocking =
+            widget.hideTriggerWhileOpen &&
+            _overlayController.isShowing &&
+            rawValue > 0.8;
 
         final isHandoff =
-            _morphController.isClosing && _morphController.hasHandedOff;
+            widget.hideTriggerWhileOpen &&
+            _morphController.isClosing &&
+            _morphController.hasHandedOff;
 
-        final triggerOpacity = !_overlayController.isShowing || isHandoff
+        final triggerOpacity =
+            !widget.hideTriggerWhileOpen ||
+                !_overlayController.isShowing ||
+                isHandoff
             ? 1.0
             : GlassMenuMorph.triggerOpacity(
                 rawValue,
@@ -716,8 +714,11 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     final double targetY =
         position.dy + (1 + _morphAlignment.y) * _triggerSize!.height / 2;
     final double menuLeft =
-        targetX - (1 + _morphAlignment.x) * widget.menuWidth / 2;
-    final double menuTop = targetY - (1 + _morphAlignment.y) * menuHeight / 2;
+        targetX - (1 + _morphAlignment.x) * widget.menuWidth / 2 +
+            widget.menuOffset.dx;
+    final double menuTop =
+        targetY - (1 + _morphAlignment.y) * menuHeight / 2 +
+            widget.menuOffset.dy;
 
     double hOffset = 0.0;
     double vOffset = 0.0;
@@ -849,6 +850,22 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     );
   }
 
+  void _hideOverlay() {
+    if (!_overlayController.isShowing) return;
+    _overlayController.hide();
+    // Reset screen-edge clamping offsets so stale values from a previous
+    // open position don't bleed into the next open cycle.
+    _horizontalOffset = 0.0;
+    _verticalOffset = 0.0;
+    widget.onDismissed?.call();
+  }
+
+  bool _popSubmenuFromController() {
+    if (_submenuStack.isEmpty || _contentMorph.isAnimating) return false;
+    _popSubmenu();
+    return true;
+  }
+
   /// Drives the stack through a level morph: the clamp offsets lerp from the
   /// level's old placement to its new one, and a finished pop removes its
   /// card's level.
@@ -941,6 +958,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     final dyMag = (menuHeight - th) / 2.0;
     final centre = _triggerOverlayPosition +
         _followOffset +
+        widget.menuOffset +
         Offset(
           tw / 2.0 - _morphAlignment.x * dxMag + _horizontalOffset,
           th / 2.0 - _morphAlignment.y * dyMag + _verticalOffset,
@@ -1484,7 +1502,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
             ),
           ),
 
-        if (widget.opaqueColor == null)
+        if (widget.opaqueColor == null && widget.hideTriggerWhileOpen)
           GlassMenuMorphBridge(
             morph: morph,
             settings: morph.material(effectiveSettings),
@@ -1529,11 +1547,14 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     // sibling merge group (the barrier and menu panel are semantic boundaries
     // whose own configToMergeUp is null). Without a dismiss barrier the host
     // is off, so the menu stays next to its trigger in traversal order.
-    return OverlaySemanticsHost(
-      enabled: widget.showDismissBarrier,
-      child: Semantics(
-        textDirection: Directionality.maybeOf(context) ?? TextDirection.ltr,
-        child: overlay,
+    return GlassBackdropGroup(
+      enabled: false,
+      child: OverlaySemanticsHost(
+        enabled: widget.showDismissBarrier,
+        child: Semantics(
+          textDirection: Directionality.maybeOf(context) ?? TextDirection.ltr,
+          child: overlay,
+        ),
       ),
     );
   }
@@ -1958,6 +1979,16 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
                 if (_bodyPointerUpHandled) return;
                 _activateItem(item);
               },
+              onLongPress: item.onLongPress == null
+                  ? null
+                  : () {
+                      if (!item.enabled) return;
+                      _isDragging = false;
+                      _isDraggingNotifier.value = false;
+                      _hoveredIndex = null;
+                      _hoveredIndexNotifier.value = null;
+                      item.onLongPress!();
+                    },
             );
           },
         );

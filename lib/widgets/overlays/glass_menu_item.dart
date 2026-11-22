@@ -14,6 +14,7 @@ class GlassMenuItem extends StatefulWidget {
   const GlassMenuItem({
     required this.title,
     required this.onTap,
+    this.onLongPress,
     super.key,
     this.icon,
     this.isDestructive = false,
@@ -56,6 +57,9 @@ class GlassMenuItem extends StatefulWidget {
 
   /// Callback when the item is tapped.
   final VoidCallback onTap;
+
+  /// Callback when the item is long-pressed.
+  final VoidCallback? onLongPress;
 
   /// Whether this is a destructive action (e.g., Delete).
   ///
@@ -492,6 +496,7 @@ class _GlassMenuItemState extends State<GlassMenuItem>
         onTapUp: widget.enabled ? (_) => isPressed.value = false : null,
         onTapCancel: widget.enabled ? () => isPressed.value = false : null,
         onTap: widget.enabled ? widget.onTap : null,
+        onLongPress: widget.enabled ? widget.onLongPress : null,
         behavior: HitTestBehavior.opaque,
         // The tap lives on the GlassFocusRegion node with the label (via
         // semanticOnTap); a second one here landed on a separate, unnamed

@@ -345,7 +345,10 @@ class GlassThemeHelpers {
       // (`frostOpacity: 1.0`) so sharp background text does not ghost through
       // behind dense menu or sheet text. Preserve any custom frostOpacity set
       // by the user on the active GlassThemeVariant.
-      if (themeOverride.frostOpacity == surfaceBaseline.frostOpacity) {
+      final overrideOpacity = themeOverride.frostOpacity;
+      final baselineOpacity = surfaceBaseline.frostOpacity;
+      if (overrideOpacity == null ||
+          (baselineOpacity != null && overrideOpacity >= baselineOpacity)) {
         return resolved.copyWith(frostOpacity: 1.0);
       }
     }

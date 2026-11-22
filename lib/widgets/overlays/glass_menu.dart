@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../src/utils/glass_localizations.dart';
 import '../../src/widgets/surfaces/shell_chrome_barrier.dart';
 import '../../utils/glass_morph_controller.dart';
+import '../../src/renderer/glass_backdrop_group.dart';
 import '../../src/renderer/liquid_glass_renderer.dart';
 import '../../src/widgets/surfaces/vertical_bar_presentation.dart';
 
@@ -250,6 +251,9 @@ class GlassMenu extends StatefulWidget {
   /// [GlassMorphController] status changes directly.
   final VoidCallback? onClose;
 
+  /// Called when the menu finishes closing and its overlay hides.
+  final VoidCallback? onDismissed;
+
   /// Optional controller to drive the menu imperatively
   /// ([GlassMenuController.open] / [GlassMenuController.close]) instead of — or
   /// in addition to — tapping the trigger.
@@ -270,6 +274,12 @@ class GlassMenu extends StatefulWidget {
   /// dismissal itself — the barrier otherwise sits in the root overlay above
   /// everything and swallows all input. Pairs with [controller]-driven open/close.
   final bool showDismissBarrier;
+
+  /// Whether to hide the trigger behind the morphing lens while open.
+  final bool hideTriggerWhileOpen;
+
+  /// Offset applied to the menu anchor position relative to the trigger.
+  final Offset menuOffset;
 
   /// Starts and ends the morph at a point at the trigger center.
   ///
@@ -362,8 +372,11 @@ class GlassMenu extends StatefulWidget {
     this.glowRadius = 0.6,
     this.glowIntensity = 0.0,
     this.onClose,
+    this.onDismissed,
     this.controller,
     this.showDismissBarrier = true,
+    this.hideTriggerWhileOpen = true,
+    this.menuOffset = Offset.zero,
     this.morphFromZero = false,
     this.platformViewBackdrop = false,
     this.morphSpeed = MorphSpeed.normal,
@@ -444,4 +457,7 @@ class GlassMenuController {
 
   /// How many submenus deep the open menu currently is (0 = root list).
   int get submenuDepth => _state?._submenuStack.length ?? 0;
+
+  /// Pops the frontmost open submenu card, returning `true` if one popped.
+  bool popSubmenu() => _state?._popSubmenuFromController() ?? false;
 }

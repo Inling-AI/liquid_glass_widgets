@@ -858,7 +858,12 @@ class _FrostedFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final blur = settings.effectiveBlur.clamp(0.0, 40.0);
+    final blur = math
+        .max(
+          settings.effectiveBlur,
+          settings.effectiveFrost * settings.frostOpacity.clamp(0.0, 1.0),
+        )
+        .clamp(0.0, 40.0);
     // Whiten veil: lift the tint toward white by a ramp of
     // [LiquidGlassSettings.whitenStrength], matching the Standard path
     // (lightweight_liquid_glass.dart). This is why minimal-tier controls
@@ -1250,7 +1255,10 @@ LiquidGlassSettings _withoutNativeMaterial(LiquidGlassSettings settings) {
   return settings.copyWith(
     blur: math.max(
       settings.blur,
-      settings.frost * GlassFrostBudget.blurPerFrost,
+      settings.frost *
+          (settings.frostOpacity >= 1.0
+              ? 1.0
+              : GlassFrostBudget.blurPerFrost),
     ),
     lightIntensity: (settings.lightIntensity +
             const LiquidGlassSettings().lightIntensity *
