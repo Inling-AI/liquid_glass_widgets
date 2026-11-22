@@ -1273,6 +1273,9 @@ class ScrollableSegmentContentState extends State<ScrollableSegmentContent>
             },
           );
         }
+        if (tab.key != null) {
+          cell = KeyedSubtree(key: tab.key, child: cell);
+        }
         return KeyedSubtree(key: _tabKeys[index], child: cell);
       },
     );

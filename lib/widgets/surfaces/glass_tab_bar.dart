@@ -1839,6 +1839,7 @@ class GlassSegment {
   ///
   /// At least one of [icon] or [label] must be provided.
   const GlassSegment({
+    this.key,
     this.icon,
     this.label,
     this.id,
@@ -1849,6 +1850,9 @@ class GlassSegment {
           icon != null || label != null,
           'GlassSegment must have either an icon or a label.',
         );
+
+  /// Optional key attached to the rendered segment hit target.
+  final Key? key;
 
   /// Icon widget to display before the label (or alone, if [label] is null).
   ///

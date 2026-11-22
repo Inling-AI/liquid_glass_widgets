@@ -477,11 +477,12 @@ class SegmentedControlContentState extends State<SegmentedControlContent> {
                       backgroundKey: widget.backgroundKey,
                     ),
                     // Segment labels paint between the two indicator passes so
-                    // the premium glass layer above can refract them.
+                    // the refractive glass layer above can sample them.
                     effectiveSegmentsChild,
-                    // Pass 2 (premium only) — glass-only pass rendered ABOVE
-                    // the labels so the shader samples and refracts them,
-                    // matching the iOS 26 refraction seen in GlassTabBar.
+                    // Pass 2 (Premium only) — glass-only pass rendered
+                    // ABOVE the labels so the Impeller shader samples and
+                    // refracts them, matching the iOS 26 refraction seen in
+                    // GlassTabBar.
                     if (isPremiumQuality)
                       AnimatedGlassIndicator(
                         velocity: velocity,
@@ -533,6 +534,7 @@ class SegmentedControlContentState extends State<SegmentedControlContent> {
           Expanded(
             child: RepaintBoundary(
               child: GestureDetector(
+                key: widget.segments[i].key,
                 excludeFromSemantics: true,
                 onTap: () => _onSegmentTap(i),
                 onTapDown: (_) {

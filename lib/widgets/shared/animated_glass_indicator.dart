@@ -9,6 +9,7 @@ import '../../src/renderer/liquid_glass_renderer.dart';
 import '../../constants/glass_defaults.dart';
 import '../../src/widgets/shared/lens_inner_shadow_painter.dart';
 import '../../theme/glass_theme.dart';
+import '../../theme/glass_theme_helpers.dart';
 import '../../types/glass_quality.dart';
 import '../../types/glass_style.dart';
 import '../../utils/draggable_indicator_physics.dart';
@@ -43,8 +44,9 @@ class AnimatedGlassIndicator extends StatelessWidget {
   /// 0 = resting, >0 = dragging/animating.
   final double thickness;
 
-  /// Rendering quality (standard/premium).
-  final GlassQuality quality;
+  /// Rendering quality (standard/premium). If null, resolves from the ambient
+  /// [GlassTheme] / [GlassAdaptiveScope] / native style fallback.
+  final GlassQuality? quality;
 
   /// Base color for the indicator (used for background mode).
   final Color indicatorColor;
@@ -149,7 +151,7 @@ class AnimatedGlassIndicator extends StatelessWidget {
     required this.itemCount,
     required this.alignment,
     required this.thickness,
-    required this.quality,
+    this.quality,
     required this.indicatorColor,
     required this.isBackgroundIndicator,
     this.borderRadius = GlassDefaults.capsuleRadius,
@@ -357,8 +359,14 @@ class AnimatedGlassIndicator extends StatelessWidget {
       thickness,
     );
 
+    final effectiveQuality = GlassThemeHelpers.resolveQuality(
+      context,
+      widgetQuality: quality,
+      fallback: GlassThemeHelpers.nativeStyleQuality(context),
+    );
     final bool isStdPath =
-        quality == GlassQuality.standard || quality == GlassQuality.minimal;
+        effectiveQuality == GlassQuality.standard ||
+        effectiveQuality == GlassQuality.minimal;
 
     // The indicator defaults to a perfect capsule: borderRadius=9999.0 is
     // reduced by the shader's own `r = min(r, shortest)` clamp to
@@ -472,7 +480,7 @@ class AnimatedGlassIndicator extends StatelessWidget {
     final glassWidget = GlassEffect(
       shape: shape,
       settings: effectiveSettings,
-      quality: quality,
+      quality: effectiveQuality,
       interactionIntensity: thickness,
       backgroundKey: backgroundKey,
       clipExpansion:
@@ -565,7 +573,9 @@ class AnimatedGlassIndicator extends StatelessWidget {
         // 0.06 on iOS 27 paraxial lens, 0.12 on iOS 26 / classic lens),
         // painted over the lens in both Standard and Premium modes so it reads
         // as the soft darkening along the top of the glass and lifted drop shadow.
-        if (paintGlass && quality != GlassQuality.minimal && fade > 0.05)
+        if (paintGlass &&
+            effectiveQuality != GlassQuality.minimal &&
+            fade > 0.05)
           IgnorePointer(
             child: CustomPaint(
               painter: LensInnerShadowPainter(
