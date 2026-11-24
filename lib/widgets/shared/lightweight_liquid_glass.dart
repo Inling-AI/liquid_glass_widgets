@@ -63,6 +63,7 @@ class LightweightLiquidGlass extends StatefulWidget {
     this.densityFactor = 0.0,
     this.indicatorWeight = 0.0,
     this.backgroundKey,
+    this.platformViewBackdrop = false,
     super.key,
   });
 
@@ -75,6 +76,7 @@ class LightweightLiquidGlass extends StatefulWidget {
     this.densityFactor = 0.0,
     this.indicatorWeight = 0.0,
     this.backgroundKey,
+    this.platformViewBackdrop = false,
     super.key,
   }) : settings = null;
 
@@ -120,6 +122,10 @@ class LightweightLiquidGlass extends StatefulWidget {
 
   /// Optional background capture key.
   final GlobalKey? backgroundKey;
+
+  /// Whether this surface sits over a platform view (e.g. an iOS WebView or
+  /// map), requiring [ClipRRect] forwarding and an unwrapped `ImageFilter.blur`.
+  final bool platformViewBackdrop;
 
   // Cache the FragmentProgram (compiled shader code) globally
   static ui.FragmentProgram? _cachedProgram;
@@ -477,13 +483,16 @@ class _LightweightLiquidGlassState extends State<LightweightLiquidGlass>
       settings: settings,
       shape: widget.shape,
       skipBlur: skipBlur,
-      backdropKey: GlassBackdropGroup.standardKeyOf(context),
+      backdropKey: widget.platformViewBackdrop
+          ? null
+          : GlassBackdropGroup.standardKeyOf(context),
       glowIntensity: widget.glowIntensity,
       densityFactor: widget.densityFactor,
       indicatorWeight: widget.indicatorWeight,
       backdropLuma: backdropLuma,
       backgroundImage: _backgroundImage,
       backgroundKey: widget.backgroundKey,
+      platformViewBackdrop: widget.platformViewBackdrop,
       // Always keep GlassControlledOpacity mounted so element identity stays
       // stable across visibility transitions (1.0 ↔ <1.0) with zero compositing
       // flag overhead at 1.0 or 0.0, and inside BackdropFilterLayer when
@@ -499,7 +508,12 @@ class _LightweightLiquidGlassState extends State<LightweightLiquidGlass>
     // mismatch that occurs when a superellipse clip slices into a circular-arc
     // SDF rim), and Flutter PR #177551 (3.41+) forwards ClipRRect to the iOS
     // PlatformView mutator stack so BackdropFilter clips over PlatformViews.
-    final shapeRadius = widget.shape.toBorderRadius();
+    // LiquidOval has no toBorderRadius(), so resolve it to a capsule radius
+    // when floating over a PlatformView to prevent rectangular blur bleed.
+    final shapeRadius =
+        widget.platformViewBackdrop && widget.shape is LiquidOval
+            ? BorderRadius.circular(GlassDefaults.capsuleRadius)
+            : widget.shape.toBorderRadius();
     if (shapeRadius != null) {
       return ClipRRect(borderRadius: shapeRadius, child: effect);
     }
@@ -521,6 +535,7 @@ class _LightweightGlassEffect extends SingleChildRenderObjectWidget {
     required this.densityFactor,
     required this.indicatorWeight,
     required this.backdropLuma,
+    required this.platformViewBackdrop,
     this.backgroundImage,
     this.backgroundKey,
     required super.child,
@@ -535,6 +550,7 @@ class _LightweightGlassEffect extends SingleChildRenderObjectWidget {
   final double densityFactor;
   final double indicatorWeight;
   final double backdropLuma;
+  final bool platformViewBackdrop;
   final ui.Image? backgroundImage;
   final GlobalKey? backgroundKey;
 
@@ -550,6 +566,7 @@ class _LightweightGlassEffect extends SingleChildRenderObjectWidget {
       densityFactor: densityFactor,
       indicatorWeight: indicatorWeight,
       backdropLuma: backdropLuma,
+      platformViewBackdrop: platformViewBackdrop,
       backgroundImage: backgroundImage,
       backgroundKey: backgroundKey,
     );
@@ -570,6 +587,7 @@ class _LightweightGlassEffect extends SingleChildRenderObjectWidget {
       ..densityFactor = densityFactor
       ..indicatorWeight = indicatorWeight
       ..backdropLuma = backdropLuma
+      ..platformViewBackdrop = platformViewBackdrop
       ..backgroundImage = backgroundImage
       ..backgroundKey = backgroundKey;
   }
@@ -587,6 +605,7 @@ class _RenderLightweightGlass extends RenderProxyBox
     required double densityFactor,
     required double indicatorWeight,
     required double backdropLuma,
+    required bool platformViewBackdrop,
     ui.Image? backgroundImage,
     GlobalKey? backgroundKey,
   })  : _shader = shader,
@@ -598,6 +617,7 @@ class _RenderLightweightGlass extends RenderProxyBox
         _densityFactor = densityFactor,
         _indicatorWeight = indicatorWeight,
         _backdropLuma = backdropLuma,
+        _platformViewBackdrop = platformViewBackdrop,
         _backgroundImage = backgroundImage,
         _backgroundKey = backgroundKey,
         _cachedLightCos = math.cos(settings.lightAngle),
@@ -722,6 +742,14 @@ class _RenderLightweightGlass extends RenderProxyBox
     markNeedsPaint();
   }
 
+  bool _platformViewBackdrop;
+  set platformViewBackdrop(bool value) {
+    if (_platformViewBackdrop == value) return;
+    _platformViewBackdrop = value;
+    _cachedBlurFilter = null;
+    markNeedsPaint();
+  }
+
   // ── Cached light direction (Task 1.3) ─────────────────────────────────────
   // Matches the caching pattern in LiquidGlassRenderObject._cachedLightDir.
   // Avoids recomputing cos/sin on every _updateShaderUniforms call.
@@ -742,6 +770,19 @@ class _RenderLightweightGlass extends RenderProxyBox
     if (_cachedBlurFilter != null &&
         _cachedFilterBlur == blurSigma &&
         _cachedFilterSat == sat) {
+      return _cachedBlurFilter!;
+    }
+
+    // Flutter's iOS PlatformView mutator stack only forwards a bare
+    // ImageFilter.blur to UIVisualEffectView; wrapping it in ImageFilter.compose
+    // breaks live PlatformView backdrop blurring.
+    if (_platformViewBackdrop) {
+      _cachedBlurFilter = ui.ImageFilter.blur(
+        sigmaX: blurSigma,
+        sigmaY: blurSigma,
+      );
+      _cachedFilterBlur = blurSigma;
+      _cachedFilterSat = sat;
       return _cachedBlurFilter!;
     }
 

@@ -109,13 +109,13 @@ class AdaptiveGlass extends StatelessWidget {
   /// Defaults to 0.0 (no glow).
   final double glowIntensity;
 
-  /// When true, this glass renders via the live `BackdropFilter` path (the
-  /// lightweight render) EVEN at [GlassQuality.premium] — because the premium
+  /// When true, this glass renders via [LightweightLiquidGlass] with live
+  /// `BackdropFilter` EVEN at [GlassQuality.premium] — because the premium
   /// shader samples a `toImageSync` texture, which cannot capture an iOS
-  /// PlatformView (map, video). Set this on glass directly over a PlatformView
-  /// so the live view shows through instead of a solid slab. Refraction is lost
-  /// (no texture), but rim/lighting and the live blur remain. Premium children
-  /// that refract Flutter content (e.g. the indicator) should NOT set this.
+  /// PlatformView (map, video, WebView). Set this on glass directly over a
+  /// PlatformView so the live view shows through instead of a solid slab while
+  /// preserving rim lighting and SDF optics. Premium children that refract
+  /// Flutter content (e.g. the indicator) should NOT set this.
   final bool platformViewBackdrop;
 
   /// Detects if Impeller rendering engine is active.
@@ -225,14 +225,12 @@ class AdaptiveGlass extends StatelessWidget {
     // ClipPath correctly clips ALL shape types (oval, superellipse, rect).
     // Zero fragment shader cost on any device.
     //
-    // platformViewBackdrop ALSO routes here: over a PlatformView only a live
-    // BackdropFilter samples the composited map. The premium/standard shaders
-    // read a captured backdrop that EXCLUDES the platform view (see
-    // canUsePremiumShader below), so they render inert there — the frost is the
-    // one tier that actually blurs over a PlatformView. This finally delivers
-    // the "live BackdropFilter path" the canUsePremiumShader comment promises.
+    // Note: platformViewBackdrop is NOT routed here; it flows down into
+    // LightweightLiquidGlass (with `canUsePremiumShader` guarded below) so
+    // non-minimal tiers keep the full iOS 27 SDF rim/lighting optics while using
+    // a live PlatformView-compatible BackdropFilter.
     // --------------------------------------------------------------------------
-    if (quality == GlassQuality.minimal || platformViewBackdrop) {
+    if (quality == GlassQuality.minimal) {
       return _wrapWithDecorations(
         context,
         baseSettings,
@@ -404,6 +402,7 @@ class AdaptiveGlass extends StatelessWidget {
           settings: effectiveSettings,
           densityFactor: 0.0, // Containers are never elevated
           glowIntensity: 0.0, // Containers don't glow
+          platformViewBackdrop: platformViewBackdrop,
           child: InheritedLiquidGlass(
             settings: effectiveSettings,
             quality: quality,
@@ -424,6 +423,7 @@ class AdaptiveGlass extends StatelessWidget {
         densityFactor: densityFactor, // 0.0 or 1.0 based on elevation
         glowIntensity:
             glowIntensity * 0.35, // Normalise additive glow to match Impeller
+        platformViewBackdrop: platformViewBackdrop,
         child: content,
       );
 
@@ -1064,7 +1064,12 @@ class _SpecularRimPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final lightIntensity = settings.effectiveLightIntensity.clamp(0.0, 1.0);
+    final lightIntensity = math
+        .max(
+          settings.effectiveLightIntensity,
+          settings.rimLight.clamp(0.0, 1.0) * 0.5 * settings.visibility,
+        )
+        .clamp(0.0, 1.0);
     if (lightIntensity == 0) return;
 
     final ambientStrength = settings.effectiveAmbientStrength.clamp(0.0, 1.0);
