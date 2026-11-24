@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -382,8 +383,35 @@ class _GlassSliderState extends State<GlassSlider>
     super.dispose();
   }
 
+  double get _thumbHeight => widget.thumbRadius * 1.6;
+  double get _thumbWidth => _thumbHeight * (37.0 / 24.0);
+  double get _thumbInset => math.max(widget.thumbRadius, _thumbWidth / 2);
+
   double _normalizedToValue(double normalized) {
     return widget.min + (normalized * (widget.max - widget.min));
+  }
+
+  ({double normalized, double value}) _resolvePosition(
+    Offset globalPosition,
+    BoxConstraints constraints,
+  ) {
+    final box = context.findRenderObject()! as RenderBox;
+    final localPosition = box.globalToLocal(globalPosition);
+    final inset = _thumbInset;
+    final trackWidth = math.max(1.0, constraints.maxWidth - (inset * 2));
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+    final rawNormalizedX =
+        ((localPosition.dx - inset) / trackWidth).clamp(0.0, 1.0);
+    final normalizedX = isRtl ? 1.0 - rawNormalizedX : rawNormalizedX;
+
+    var newValue = _normalizedToValue(normalizedX);
+    if (widget.divisions != null) {
+      final stepSize = (widget.max - widget.min) / widget.divisions!;
+      newValue =
+          ((newValue - widget.min) / stepSize).round() * stepSize + widget.min;
+      newValue = newValue.clamp(widget.min, widget.max);
+    }
+    return (normalized: normalizedX, value: newValue);
   }
 
   void _handleDragDown(DragDownDetails details) {
@@ -398,49 +426,53 @@ class _GlassSliderState extends State<GlassSlider>
     unawaited(_thicknessController.forward());
   }
 
-  void _handleDragStart(DragStartDetails details) {
+  void _handleDragStart(DragStartDetails details, BoxConstraints constraints) {
+    final previous = _dragValue ?? widget.value;
     // Only call onChangeStart once per interaction
     widget.onChangeStart?.call(widget.value);
+    final resolved = _resolvePosition(details.globalPosition, constraints);
+    _jellyController.animateTo(resolved.normalized);
+    if (widget.divisions != null && resolved.value != previous) {
+      unawaited(HapticFeedback.selectionClick());
+    }
+    setState(() {
+      _dragValue = resolved.value;
+    });
+    widget.onChanged?.call(resolved.value);
   }
 
   void _handleDragUpdate(
       DragUpdateDetails details, BoxConstraints constraints) {
-    final box = context.findRenderObject()! as RenderBox;
-    final localPosition = box.globalToLocal(details.globalPosition);
-
-    // Calculate normalized position (0-1)
-    final trackWidth = constraints.maxWidth - (widget.thumbRadius * 2);
-    final isRtl = Directionality.of(context) == TextDirection.rtl;
-    final rawNormalizedX =
-        ((localPosition.dx - widget.thumbRadius) / trackWidth).clamp(0.0, 1.0);
-    final normalizedX = isRtl ? 1.0 - rawNormalizedX : rawNormalizedX;
+    final resolved = _resolvePosition(details.globalPosition, constraints);
 
     // Feed the spring controller with the new normalised position.
     // Its velocity property produces smooth, spring-based values that
     // buildJellyTransform can use for organic squash/stretch.
-    _jellyController.animateTo(normalizedX);
+    _jellyController.animateTo(resolved.normalized);
 
-    // Convert to value
-    var newValue = _normalizedToValue(normalizedX);
-
-    // Snap to divisions if provided
-    if (widget.divisions != null) {
-      final stepSize = (widget.max - widget.min) / widget.divisions!;
-      newValue =
-          ((newValue - widget.min) / stepSize).round() * stepSize + widget.min;
-      newValue = newValue.clamp(widget.min, widget.max);
-
-      // Haptic feedback on division change
-      if (_dragValue != null && newValue != _dragValue) {
-        unawaited(HapticFeedback.selectionClick());
-      }
+    // Haptic feedback on division change
+    if (widget.divisions != null &&
+        _dragValue != null &&
+        resolved.value != _dragValue) {
+      unawaited(HapticFeedback.selectionClick());
     }
 
     setState(() {
-      _dragValue = newValue;
+      _dragValue = resolved.value;
     });
 
-    widget.onChanged?.call(newValue);
+    widget.onChanged?.call(resolved.value);
+  }
+
+  void _handleTapUp(TapUpDetails details, BoxConstraints constraints) {
+    final resolved = _resolvePosition(details.globalPosition, constraints);
+    widget.onChangeStart?.call(widget.value);
+    if (widget.divisions != null && resolved.value != widget.value) {
+      unawaited(HapticFeedback.selectionClick());
+    }
+    _jellyController.animateTo(resolved.normalized);
+    widget.onChanged?.call(resolved.value);
+    widget.onChangeEnd?.call(resolved.value);
   }
 
   void _handleDragEnd(DragEndDetails details) {
@@ -502,8 +534,10 @@ class _GlassSliderState extends State<GlassSlider>
     return LayoutBuilder(
       builder: (context, constraints) {
         final isRtl = Directionality.of(context) == TextDirection.rtl;
-        final trackWidth = constraints.maxWidth - (widget.thumbRadius * 2);
-        final thumbPosition = widget.thumbRadius +
+        final thumbInset = _thumbInset;
+        final trackWidth =
+            math.max(1.0, constraints.maxWidth - (thumbInset * 2));
+        final thumbPosition = thumbInset +
             (trackWidth * (isRtl ? 1.0 - normalizedValue : normalizedValue));
 
         final step = (widget.max - widget.min) / (widget.divisions ?? 10);
@@ -519,8 +553,8 @@ class _GlassSliderState extends State<GlassSlider>
             ((decreasedValue - widget.min) / (widget.max - widget.min))
                 .clamp(0.0, 1.0);
 
-        final thumbHeight = widget.thumbRadius * 1.6;
-        final thumbWidth = thumbHeight * (37.0 / 24.0);
+        final thumbHeight = _thumbHeight;
+        final thumbWidth = _thumbWidth;
         final baseMediaQuery =
             MediaQuery.maybeOf(context) ?? const MediaQueryData();
         final isInteractive = widget.onChanged != null;
@@ -662,8 +696,15 @@ class _GlassSliderState extends State<GlassSlider>
             ),
             child: RepaintBoundary(
               child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                dragStartBehavior: DragStartBehavior.down,
+                onTapUp: isInteractive
+                    ? (details) => _handleTapUp(details, constraints)
+                    : null,
                 onHorizontalDragDown: isInteractive ? _handleDragDown : null,
-                onHorizontalDragStart: isInteractive ? _handleDragStart : null,
+                onHorizontalDragStart: isInteractive
+                    ? (details) => _handleDragStart(details, constraints)
+                    : null,
                 onHorizontalDragUpdate: isInteractive
                     ? (details) => _handleDragUpdate(details, constraints)
                     : null,
@@ -682,8 +723,8 @@ class _GlassSliderState extends State<GlassSlider>
   }
 
   Widget _buildThumbGlass(double scale, bool isDark) {
-    final thumbHeight = widget.thumbRadius * 1.6;
-    final thumbWidth = thumbHeight * (37.0 / 24.0);
+    final thumbHeight = _thumbHeight;
+    final thumbWidth = _thumbWidth;
     final borderRadius = thumbHeight / 2;
 
     // Calculate transition value (0 = at rest, 1 = fully dragging)
