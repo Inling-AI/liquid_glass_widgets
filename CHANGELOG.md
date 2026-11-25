@@ -2,6 +2,8 @@
 
 ## Menu motion
 
+- **`GlassMenu` opaque surfaces:** Add shadows and an opacity-based content reveal for the root panel and submenu cards. Desktop hosts can mount a menu in a separate Flutter view with a shared logical origin.
+
 - **`GlassMenu` motion:** A glass lens travels from the trigger and settles into the menu with a spring. Text and icons sharpen in place, with transient perimeter refraction on Impeller. Dismissal releases the foreground and backdrop blur as the lens dips, then contracts through a narrow glass connection into the returning trigger.
 
 ## Bug Fixes

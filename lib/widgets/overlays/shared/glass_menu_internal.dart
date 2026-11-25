@@ -3,6 +3,45 @@ part of '../glass_menu.dart';
 class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   final OverlayPortalController _overlayController = OverlayPortalController();
 
+  OverlayEntry? _externalOverlayEntry;
+
+  bool get _isOverlayShowing =>
+      _externalOverlayEntry != null || _overlayController.isShowing;
+
+  BuildContext? get _externalOverlayContext {
+    final target = widget.overlayContext;
+    return target != null &&
+            target.mounted &&
+            View.of(target).viewId != View.of(context).viewId
+        ? target
+        : null;
+  }
+
+  void _updateMenu(VoidCallback update) {
+    setState(update);
+    _refreshExternalOverlay();
+  }
+
+  void _refreshExternalOverlay() {
+    final entry = _externalOverlayEntry;
+    if (entry == null) return;
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (identical(_externalOverlayEntry, entry)) entry.markNeedsBuild();
+      });
+    } else {
+      entry.markNeedsBuild();
+    }
+  }
+
+  void _removeExternalOverlay() {
+    final entry = _externalOverlayEntry;
+    _externalOverlayEntry = null;
+    entry?.remove();
+    entry?.dispose();
+  }
+
   late final GlassMorphController _morphController;
   final GlassMenuMotion _menuMotion = GlassMenuMotion();
 
@@ -93,6 +132,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
         _hoveredIndexNotifier.value = null;
       }
     }
+    _refreshExternalOverlay();
     if (widget.morphSpeed != oldWidget.morphSpeed) {
       _morphController.setSpeed(widget.morphSpeed);
     }
@@ -132,12 +172,12 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     _morphController =
         GlassMorphController(vsync: this, speed: widget.morphSpeed);
     _morphController.addListener(() {
-      if (mounted) setState(() {});
+      if (mounted) _updateMenu(() {});
 
       // Hide overlay only when the spring has FULLY SETTLED near 0.
       // Velocity guard prevents premature hiding on first zero-crossing
       // during the underdamped close bounce.
-      if (_overlayController.isShowing &&
+      if (_isOverlayShowing &&
           _morphController.value <= 0.001 &&
           _morphController.velocity.abs() < 0.5 &&
           _morphController.status != AnimationStatus.forward) {
@@ -167,6 +207,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   @override
   void dispose() {
     _removeRouteListeners();
+    _removeExternalOverlay();
     _routes = const [];
     widget.controller?._detach(this);
     _morphController.dispose();
@@ -240,24 +281,24 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   }
 
   void _handleSecondaryAnimationStatus(AnimationStatus status) {
-    if (!_overlayController.isShowing) return;
+    if (!_isOverlayShowing) return;
     if (status == AnimationStatus.forward) {
       _dismissImmediately();
     }
   }
 
   void _handlePrimaryAnimationStatus(AnimationStatus status) {
-    if (!_overlayController.isShowing) return;
+    if (!_isOverlayShowing) return;
     if (status == AnimationStatus.reverse) {
       _dismissImmediately();
     }
   }
 
   void _dismissImmediately() {
-    if (!_overlayController.isShowing && _morphController.value == 0.0) {
+    if (!_isOverlayShowing && _morphController.value == 0.0) {
       return;
     }
-    // Never call hide(), reset(), or setState() synchronously during
+    // Never call hide(), reset(), or _updateMenu() synchronously during
     // persistent callbacks (e.g. declarative Navigator.pages / go_router updates).
     if (SchedulerBinding.instance.schedulerPhase ==
         SchedulerPhase.persistentCallbacks) {
@@ -287,7 +328,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     _openedOnPointerDown = false;
     _resetSubmenus();
     if (mounted) {
-      setState(() {});
+      _updateMenu(() {});
     }
   }
 
@@ -300,24 +341,19 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
 
         // Block trigger taps while menu is significantly open.
         final isMenuBlocking =
-            widget.hideTriggerWhileOpen &&
-            _overlayController.isShowing &&
-            rawValue > 0.8;
+            widget.hideTriggerWhileOpen && _isOverlayShowing && rawValue > 0.8;
 
-        final isHandoff =
-            widget.hideTriggerWhileOpen &&
+        final isHandoff = widget.hideTriggerWhileOpen &&
             _morphController.isClosing &&
             _morphController.hasHandedOff;
 
         final triggerOpacity =
-            !widget.hideTriggerWhileOpen ||
-                !_overlayController.isShowing ||
-                isHandoff
-            ? 1.0
-            : GlassMenuMorph.triggerOpacity(
-                rawValue,
-                _menuMotion.dismissalAt(rawValue),
-              );
+            !widget.hideTriggerWhileOpen || !_isOverlayShowing || isHandoff
+                ? 1.0
+                : GlassMenuMorph.triggerOpacity(
+                    rawValue,
+                    _menuMotion.dismissalAt(rawValue),
+                  );
 
         // Calculate the momentum push vector based on the exact same logic as Blob B
         // so the real trigger precisely inherits the menu's momentum trajectory.
@@ -378,37 +414,37 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
         // the semantics node the open menu's nodes are traversed from; with
         // no child that node is 0x0, and the menu drops out of the semantics
         // tree.
-        return OverlayPortal(
-          controller: _overlayController,
-          overlayChildBuilder: _buildMorphingOverlay,
-          overlayLocation: OverlayChildLocation.nearestOverlay,
-          // Trigger — physically bounces and absorbs impact when slammed by the closing menu!
-          child: Transform.translate(
-            offset: Offset(pushDx, pushDy),
-            child: Transform.scale(
-              scale: impactScale,
-              child: Listener(
-                behavior: HitTestBehavior.translucent,
-                onPointerDown: _handleTriggerPointerDown,
-                onPointerMove: _handleTriggerPointerMove,
-                onPointerUp: _handleTriggerPointerUp,
-                onPointerCancel: _handleTriggerPointerCancel,
-                child: Opacity(
-                  opacity: triggerOpacity,
-                  child: GlassMaterializeScope(
-                    glassProgress:
-                        triggerOpacity * (outer?.glassProgress ?? 1.0),
-                    contentOpacity: outer?.contentOpacity ?? 1.0,
-                    contentSigma: outer?.contentSigma ?? 0.0,
-                    child: IgnorePointer(
-                      ignoring: isMenuBlocking,
-                      child: triggerChild,
-                    ),
+        final trigger = Transform.translate(
+          offset: Offset(pushDx, pushDy),
+          child: Transform.scale(
+            scale: impactScale,
+            child: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: _handleTriggerPointerDown,
+              onPointerMove: _handleTriggerPointerMove,
+              onPointerUp: _handleTriggerPointerUp,
+              onPointerCancel: _handleTriggerPointerCancel,
+              child: Opacity(
+                opacity: triggerOpacity,
+                child: GlassMaterializeScope(
+                  glassProgress: triggerOpacity * (outer?.glassProgress ?? 1.0),
+                  contentOpacity: outer?.contentOpacity ?? 1.0,
+                  contentSigma: outer?.contentSigma ?? 0.0,
+                  child: IgnorePointer(
+                    ignoring: isMenuBlocking,
+                    child: triggerChild,
                   ),
                 ),
               ),
             ),
           ),
+        );
+        if (_externalOverlayContext != null) return trigger;
+        return OverlayPortal(
+          controller: _overlayController,
+          overlayChildBuilder: _buildMorphingOverlay,
+          overlayLocation: OverlayChildLocation.nearestOverlay,
+          child: trigger,
         );
       },
     );
@@ -421,7 +457,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
       _openedOnPointerDown = false;
       return;
     }
-    if (_overlayController.isShowing && _morphController.value > 0.1) {
+    if (_isOverlayShowing && _morphController.value > 0.1) {
       _closeMenu();
     } else {
       _openMenu();
@@ -431,7 +467,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   void _handleTriggerPointerDown(PointerDownEvent event) {
     if (!widget.enableContinuousSwipe) return;
 
-    if (_overlayController.isShowing && _morphController.value > 0.1) {
+    if (_isOverlayShowing && _morphController.value > 0.1) {
       _closeMenu();
       return;
     }
@@ -483,7 +519,12 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
 
     // Haptic feedback on item boundary crossing (iOS HIG)
     if (_hoveredIndex != null && _hoveredIndex != previousIndex) {
-      HapticFeedback.selectionClick();
+      final feedback = widget.onDragSelectionChanged;
+      if (feedback == null) {
+        HapticFeedback.selectionClick();
+      } else {
+        feedback();
+      }
     }
 
     // Feed touch position to GlassGlow if interaction glow is enabled
@@ -577,7 +618,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   /// closed; the next [_openMenu] resets it to zero.
   void setFollowOffset(Offset offset) {
     if (_followOffset == offset) return;
-    setState(() => _followOffset = offset);
+    _updateMenu(() => _followOffset = offset);
   }
 
   void _openMenu() {
@@ -597,17 +638,20 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     _triggerBorderRadius = _triggerSize!.height / 2;
     _triggerGlobalPosition =
         renderBox.localToGlobal(Offset.zero); // store for screen bounds
-    final overlay = Overlay.maybeOf(context);
+    final externalContext = _externalOverlayContext;
+    final overlay = Overlay.maybeOf(externalContext ?? context);
     final overlayBox = overlay?.context.findRenderObject() as RenderBox?;
-    _triggerOverlayPosition = overlayBox != null
-        ? renderBox.localToGlobal(Offset.zero, ancestor: overlayBox)
-        : _triggerGlobalPosition;
+    _triggerOverlayPosition = overlayBox == null
+        ? _triggerGlobalPosition
+        : externalContext == null
+            ? renderBox.localToGlobal(Offset.zero, ancestor: overlayBox)
+            : overlayBox.globalToLocal(_triggerGlobalPosition);
     // A fresh open must never inherit a previous open's live anchor nudge.
     _followOffset = Offset.zero;
     // ...nor a previous open's submenu level.
     _resetSubmenus();
     final position = _triggerGlobalPosition;
-    final mediaQuery = MediaQuery.maybeOf(context);
+    final mediaQuery = MediaQuery.maybeOf(_externalOverlayContext ?? context);
     final screenWidth = mediaQuery?.size.width ?? double.infinity;
     final screenHeight = mediaQuery?.size.height ?? double.infinity;
 
@@ -659,12 +703,31 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     // 2. Clamping: calculate offsets to keep menu within screen bounds
     final clamp = _computeClampOffsets(menuHeight);
 
-    setState(() {
+    _updateMenu(() {
       _horizontalOffset = clamp.dx;
       _verticalOffset = clamp.dy;
     });
 
-    _overlayController.show();
+    if (externalContext == null) {
+      _overlayController.show();
+    } else if (_externalOverlayEntry == null) {
+      final entry = OverlayEntry(
+        builder: (context) => Focus(
+          autofocus: true,
+          onKeyEvent: (_, event) {
+            if (event is KeyDownEvent &&
+                event.logicalKey == LogicalKeyboardKey.escape) {
+              _closeMenu();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: _buildMorphingOverlay(context),
+        ),
+      );
+      _externalOverlayEntry = entry;
+      overlay!.insert(entry);
+    }
     _menuMotion.retarget(_morphController.value, closing: false);
     _morphController.open(
       simulation: widget.morphSpeed == MorphSpeed.normal
@@ -684,10 +747,10 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   Offset _computeClampOffsets(double menuHeight) {
     if (!widget.autoAdjustToScreen || _triggerSize == null) return Offset.zero;
     final position = _triggerGlobalPosition;
-    final mediaQuery = MediaQuery.maybeOf(context);
+    final mediaQuery = MediaQuery.maybeOf(_externalOverlayContext ?? context);
     final screenWidth = mediaQuery?.size.width ?? double.infinity;
     final screenHeight = mediaQuery?.size.height ?? double.infinity;
-    final flutterView = View.of(context);
+    final flutterView = View.of(_externalOverlayContext ?? context);
     final mqPadding = EdgeInsets.fromViewPadding(
       flutterView.padding,
       flutterView.devicePixelRatio,
@@ -714,12 +777,12 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
         position.dx + (1 + _morphAlignment.x) * _triggerSize!.width / 2;
     final double targetY =
         position.dy + (1 + _morphAlignment.y) * _triggerSize!.height / 2;
-    final double menuLeft =
-        targetX - (1 + _morphAlignment.x) * widget.menuWidth / 2 +
-            widget.menuOffset.dx;
-    final double menuTop =
-        targetY - (1 + _morphAlignment.y) * menuHeight / 2 +
-            widget.menuOffset.dy;
+    final double menuLeft = targetX -
+        (1 + _morphAlignment.x) * widget.menuWidth / 2 +
+        widget.menuOffset.dx;
+    final double menuTop = targetY -
+        (1 + _morphAlignment.y) * menuHeight / 2 +
+        widget.menuOffset.dy;
 
     double hOffset = 0.0;
     double vOffset = 0.0;
@@ -769,7 +832,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     final sourceOffset = _listRowTop(sourceIndex, sourceList) -
         (_scrollController.hasClients ? _scrollController.offset : 0.0);
     final list = _levelList(parent, _submenuStack.length + 1);
-    setState(() {
+    _updateMenu(() {
       _submenuStack.add(_SubmenuLevel(
         list: list,
         sourceIndex: sourceIndex,
@@ -815,7 +878,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
           iconSize: parent.iconSize,
           enablePressScale: parent.enablePressScale,
         ),
-        const GlassMenuDivider(),
+        GlassMenuDivider(color: widget.dividerColor),
         ...parent.submenu!,
       ];
 
@@ -839,7 +902,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   void _popSubmenu() {
     if (_submenuStack.isEmpty || _contentMorph.isAnimating) return;
     _clearGlide();
-    setState(() {
+    _updateMenu(() {
       _cachedWrappedItems = null;
       _levelMorphPopping = true;
     });
@@ -852,8 +915,12 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   }
 
   void _hideOverlay() {
-    if (!_overlayController.isShowing) return;
-    _overlayController.hide();
+    if (!_isOverlayShowing) return;
+    if (_externalOverlayEntry != null) {
+      _removeExternalOverlay();
+    } else {
+      _overlayController.hide();
+    }
     // Reset screen-edge clamping offsets so stale values from a previous
     // open position don't bleed into the next open cycle.
     _horizontalOffset = 0.0;
@@ -873,7 +940,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   void _onContentMorphTick() {
     if (!mounted) return;
     final t = _kSubmenuMorphCurve.transform(_contentMorph.value);
-    setState(() {
+    _updateMenu(() {
       _horizontalOffset = lerpDouble(
         _contentMorphFromHOffset,
         _contentMorphToHOffset,
@@ -900,7 +967,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   void _finishPopIfNeeded() {
     if (_levelMorphPopping && _contentMorph.value >= 1.0) {
       final removed = _submenuStack.last;
-      setState(() {
+      _updateMenu(() {
         _submenuStack.removeLast();
         _cachedWrappedItems = null;
         _levelMorphPopping = false;
@@ -1160,6 +1227,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
                     decoration: ShapeDecoration(
                       color: opaqueColor,
                       shape: outline,
+                      shadows: widget.shadows,
                     ),
                   ),
                 ),
@@ -1243,14 +1311,8 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     return offset;
   }
 
-  double _listHeight(List<Widget> list) {
-    var height = 2.0 * _kBodyVerticalPadding;
-    for (var i = 0; i < list.length; i++) {
-      height += _getScaledItemHeight(list[i], context);
-      if (i < list.length - 1) height += _kRowGap;
-    }
-    return height;
-  }
+  double _listHeight(List<Widget> list) =>
+      GlassMenu.estimateContentHeight(context, list);
 
   /// The resting height of the whole visible stack, measured from the body's
   /// anchored edge the way the menu grows: the body's own receded extent, plus
@@ -1290,7 +1352,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
       final origin = _triggerGlobalPosition - _triggerOverlayPosition;
       final bounds = _boundsAtDepth(depth)
           .shift(origin - Offset(_horizontalOffset, _verticalOffset));
-      final mq = MediaQuery.of(context);
+      final mq = MediaQuery.of(_externalOverlayContext ?? context);
       final padding = mq.padding + widget.menuPadding;
       double fit(double lo, double hi, double min, double max) =>
           lo < min ? min - lo : (hi > max ? max - hi : 0.0);
@@ -1317,7 +1379,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   // ─── External glide (GlassMenuController.glideTo / endGlide) ────────────────
 
   bool _glideTo(Offset globalPosition) {
-    if (!_overlayController.isShowing || _morphController.isClosing) {
+    if (!_isOverlayShowing || _morphController.isClosing) {
       return false;
     }
     if (_contentMorph.isAnimating) {
@@ -1345,7 +1407,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   }
 
   bool _endGlide() {
-    if (!_overlayController.isShowing) return false;
+    if (!_isOverlayShowing) return false;
     final index = _hoveredIndex;
     final pop = _glideOverParent;
     _clearGlide();
@@ -1365,7 +1427,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   }
 
   void _cancelGlide() {
-    if (!_overlayController.isShowing) return;
+    if (!_isOverlayShowing) return;
     _clearGlide();
   }
 
@@ -1380,7 +1442,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     _isDraggingNotifier.value = false;
     _hoveredIndex = null;
     _hoveredIndexNotifier.value = null;
-    if (_hasStretched) setState(() => _hasStretched = false);
+    if (_hasStretched) _updateMenu(() => _hasStretched = false);
   }
 
   /// The open stack's global rect at rest: the body plus every open card,
@@ -1399,8 +1461,8 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   }
 
   void _closeMenu() {
-    if (!_overlayController.isShowing) return;
-    setState(() {
+    if (!_isOverlayShowing) return;
+    _updateMenu(() {
       _hoveredIndex = null;
       _isDragging = false;
     });
@@ -1430,6 +1492,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   /// their state transition while the menu is still visible.
   void _fireItemTap(GlassMenuItem item) {
     item.onTap();
+    if (!item.closeOnTap) return;
     final delay = item.closeDelay;
     if (delay == null || delay == Duration.zero) {
       _closeMenu();
@@ -1474,6 +1537,9 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
         : 1.0;
 
     final overlay = Stack(
+      clipBehavior: widget.opaqueColor != null && widget.shadows != null
+          ? Clip.none
+          : Clip.hardEdge,
       children: [
         // Invisible full-screen tap-to-close barrier
         if (progress > 0.3 && widget.showDismissBarrier)
@@ -1575,23 +1641,18 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     // Account for system text scaling when calculating natural height.
     // Without this, increased text size causes items to render taller than
     // the height budget, triggering unwanted scrolling (GitHub issue).
-    final mediaQuery = MediaQuery.maybeOf(context);
+    final mediaQuery = MediaQuery.maybeOf(_externalOverlayContext ?? context);
 
-    // Sum all menu item heights, scaled by text scaler
-    final itemHeights = widget.items.fold<double>(
-      0.0,
-      (sum, item) => sum + _getScaledItemHeight(item, context),
+    final naturalHeight = math.min(
+      widget.items.isEmpty
+          ? _listHeight(widget.items) - _kRowGap
+          : _listHeight(widget.items),
+      _maximumStackHeight,
     );
-
-    // Add vertical padding (12px top + 12px bottom = 24px total)
-    // plus vertical gaps between items (2px each)
-    final gaps = (widget.items.length - 1) * 2.0;
-    final naturalHeight =
-        math.min(itemHeights + 24.0 + gaps, _maximumStackHeight);
 
     if (widget.autoAdjustToScreen) {
       if (mediaQuery != null) {
-        final flutterView = View.of(context);
+        final flutterView = View.of(_externalOverlayContext ?? context);
         final mqPadding = EdgeInsets.fromViewPadding(
             flutterView.padding, flutterView.devicePixelRatio);
 
@@ -1708,6 +1769,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
       clipper: ShapeBorderClipper(shape: shape),
       child: GlassMenuMorphContent(
         morph: morph,
+        simplifyContent: widget.opaqueColor != null,
         child: _buildListContent(
           widget.items,
           interactive: interactive,
@@ -1901,7 +1963,9 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
                               event.localPosition, context);
                       if (indexToTap != null) {
                         final item = _items[indexToTap];
-                        if (item is GlassMenuItem && item.enabled) {
+                        if (item is GlassMenuItem &&
+                            item.enabled &&
+                            !item.hasInteractiveTrailing) {
                           _activateItem(item);
                         }
                       }
@@ -1950,7 +2014,9 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
               icon: item.icon,
               isDestructive: item.isDestructive,
               enabled: item.enabled,
+              disabledOpacity: item.disabledOpacity,
               trailing: item.trailing,
+              hasInteractiveTrailing: item.hasInteractiveTrailing,
               height: item.height,
               titleStyle: item.titleStyle,
               subtitleStyle: item.subtitleStyle,
@@ -1968,7 +2034,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
                 if (!item.enabled) return;
                 // For scrollable menus, we delegate taps to the native GestureDetector
                 // so it can properly participate in the gesture arena with the ScrollView.
-                if (_isScrollable) {
+                if (_isScrollable || item.hasInteractiveTrailing) {
                   _activateItem(item);
                   return;
                 }
@@ -2010,7 +2076,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   double get _maximumStackHeight {
     final external = widget.maxStackHeight ?? double.infinity;
     if (!widget.autoAdjustToScreen) return external;
-    final mq = MediaQuery.of(context);
+    final mq = MediaQuery.of(_externalOverlayContext ?? context);
     return math.min(
         external,
         math.max(
@@ -2024,43 +2090,11 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   double _visibleListHeight(List<Widget> items) =>
       math.min(_listHeight(items), _maximumStackHeight);
 
-  /// Accounts for system text scaling.
-  ///
-  /// When the user increases the system text size, GlassMenuItem renders
-  /// with scaled text inside a ConstrainedBox (minHeight). The text content
-  /// may push the actual height beyond the nominal [GlassMenuItem.height].
-  /// This method estimates the rendered height to prevent the menu from
-  /// becoming scrollable when it shouldn't be.
-  double _getScaledItemHeight(Widget item, BuildContext context) {
-    final mediaQuery = MediaQuery.maybeOf(context);
-    final textScaler = mediaQuery?.textScaler ?? TextScaler.noScaling;
-
-    if (item is GlassMenuItem) {
-      // The item has 8px vertical padding top + bottom = 16px fixed chrome.
-      // The remaining space is text content that scales with system text size.
-      const fixedPadding = 16.0;
-      final baseFontSize = item.titleStyle?.fontSize ?? 17.0;
-      final scaledFontSize = textScaler.scale(baseFontSize);
-      final lineHeight = scaledFontSize * 1.2; // Approximate line height
-      final textHeight = lineHeight * item.maxLines;
-
-      // Subtitle adds another scaled line
-      double subtitleHeight = 0;
-      if (item.subtitle != null) {
-        final subFontSize = item.subtitleStyle?.fontSize ?? 13.0;
-        subtitleHeight = textScaler.scale(subFontSize) * 1.2;
-      }
-
-      final contentHeight = textHeight + subtitleHeight + fixedPadding;
-      // Use the larger of nominal height or scaled content height
-      return math.max(item.height, contentHeight);
-    }
-    // Dividers and labels don't contain user-facing scaled text
-    if (item is GlassMenuDivider) return item.height;
-    if (item is GlassMenuLabel) return item.height;
-    if (item is PreferredSizeWidget) return item.preferredSize.height;
-    return 44.0;
-  }
+  double _getScaledItemHeight(Widget item, BuildContext context) =>
+      GlassMenu._scaledItemHeight(
+        item,
+        MediaQuery.maybeTextScalerOf(context) ?? TextScaler.noScaling,
+      );
 
   int? _calculateIndexFromPosition(Offset localPosition, BuildContext context) {
     final visibleHeight = _activeHeight;
@@ -2109,7 +2143,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
         x > widget.menuWidth + 100;
 
     if (_hasStretched != outsideBounds) {
-      setState(() => _hasStretched = outsideBounds);
+      _updateMenu(() => _hasStretched = outsideBounds);
     }
 
     int? detectedIndex;

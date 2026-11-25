@@ -327,6 +327,7 @@ class GlassMenuMorphContent extends StatefulWidget {
   const GlassMenuMorphContent({
     required this.morph,
     required this.child,
+    this.simplifyContent = false,
     super.key,
   });
 
@@ -335,6 +336,9 @@ class GlassMenuMorphContent extends StatefulWidget {
 
   /// The content laid out in menu coordinates.
   final Widget child;
+
+  /// Uses opacity and geometry for the content reveal.
+  final bool simplifyContent;
 
   static ui.FragmentProgram? _program;
   static Future<void>? _preload;
@@ -371,7 +375,18 @@ class _GlassMenuMorphContentState extends State<GlassMenuMorphContent> {
   @override
   void initState() {
     super.initState();
-    if (ui.ImageFilter.isShaderFilterSupported &&
+    _prepareShader();
+  }
+
+  @override
+  void didUpdateWidget(GlassMenuMorphContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.simplifyContent && !widget.simplifyContent) _prepareShader();
+  }
+
+  void _prepareShader() {
+    if (!widget.simplifyContent &&
+        ui.ImageFilter.isShaderFilterSupported &&
         GlassMenuMorphContent._program == null) {
       GlassMenuMorphContent.preload().then((_) {
         if (mounted && GlassMenuMorphContent._program != null) {
@@ -390,7 +405,9 @@ class _GlassMenuMorphContentState extends State<GlassMenuMorphContent> {
   @override
   Widget build(BuildContext context) {
     final morph = widget.morph;
-    final shader = morph._refraction > 0 && morph.bounds.shortestSide >= 1
+    final shader = !widget.simplifyContent &&
+            morph._refraction > 0 &&
+            morph.bounds.shortestSide >= 1
         ? _shader ??= GlassMenuMorphContent._program?.fragmentShader()
         : null;
     if (shader != null) {
@@ -408,7 +425,7 @@ class _GlassMenuMorphContentState extends State<GlassMenuMorphContent> {
           child: GlassMaterializeScope(
             glassProgress: 1,
             contentOpacity: morph._contentOpacity,
-            contentSigma: morph._contentSigma,
+            contentSigma: widget.simplifyContent ? 0.0 : morph._contentSigma,
             child: Builder(
               builder: (context) => GlassMaterializeScope.wrapContent(
                 context,

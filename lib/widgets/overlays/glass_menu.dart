@@ -201,6 +201,8 @@ class GlassMenu extends StatefulWidget {
   /// Custom color for the menu selection background.
   final Color selectionColor;
 
+  static const defaultSelectionColor = Color(0x3DFFFFFF);
+
   /// A flat fill for the menu panel and its submenu cards, drawn instead of
   /// glass when set.
   ///
@@ -217,6 +219,19 @@ class GlassMenu extends StatefulWidget {
   /// Meant for Increase Contrast, where iOS outlines menus: pass a side while
   /// the setting is on, and `null` (the default, no outline) otherwise.
   final BorderSide? border;
+
+  /// Shadows painted beneath the opaque root panel and submenu cards.
+  final List<BoxShadow>? shadows;
+
+  /// Overlay host for a menu whose trigger sits in another Flutter view.
+  /// Both views must share the same logical origin.
+  final BuildContext? overlayContext;
+
+  /// Divider color for submenu headers.
+  final Color? dividerColor;
+
+  /// Feedback when a drag crosses into a selectable row.
+  final VoidCallback? onDragSelectionChanged;
 
   /// Optional fixed height for the menu.
   ///
@@ -366,9 +381,13 @@ class GlassMenu extends StatefulWidget {
     this.menuHeight,
     this.maxStackHeight,
     this.menuPadding = EdgeInsets.zero,
-    this.selectionColor = const Color(0x3DFFFFFF),
+    this.selectionColor = defaultSelectionColor,
     this.opaqueColor,
     this.border,
+    this.shadows,
+    this.overlayContext,
+    this.dividerColor,
+    this.onDragSelectionChanged,
     this.enableInteractionGlow = true,
     this.glowOnTapOnly = false,
     this.glowColor,
@@ -394,6 +413,54 @@ class GlassMenu extends StatefulWidget {
         assert(trigger != null || triggerBuilder != null,
             'Either trigger or triggerBuilder must be provided');
 
+  /// Layout height of the rows, vertical padding and gaps before viewport clamping.
+  static double estimateContentHeight(
+      BuildContext context, List<Widget> items) {
+    final textScaler =
+        MediaQuery.maybeTextScalerOf(context) ?? TextScaler.noScaling;
+    var height = 2.0 * _kBodyVerticalPadding;
+    for (var i = 0; i < items.length; i++) {
+      height += _scaledItemHeight(items[i], textScaler);
+      if (i < items.length - 1) height += _kRowGap;
+    }
+    return height;
+  }
+
+  /// Accounts for system text scaling.
+  ///
+  /// When the user increases the system text size, GlassMenuItem renders
+  /// with scaled text inside a ConstrainedBox (minHeight). The text content
+  /// may push the actual height beyond the nominal [GlassMenuItem.height].
+  /// This method estimates the rendered height to prevent the menu from
+  /// becoming scrollable when it shouldn't be.
+  static double _scaledItemHeight(Widget item, TextScaler textScaler) {
+    if (item is GlassMenuItem) {
+      // The item has 8px vertical padding top + bottom = 16px fixed chrome.
+      // The remaining space is text content that scales with system text size.
+      const fixedPadding = 16.0;
+      final baseFontSize = item.titleStyle?.fontSize ?? 17.0;
+      final scaledFontSize = textScaler.scale(baseFontSize);
+      final lineHeight = scaledFontSize * 1.2; // Approximate line height
+      final textHeight = lineHeight * item.maxLines;
+
+      // Subtitle adds another scaled line
+      double subtitleHeight = 0;
+      if (item.subtitle != null) {
+        final subFontSize = item.subtitleStyle?.fontSize ?? 13.0;
+        subtitleHeight = textScaler.scale(subFontSize) * 1.2;
+      }
+
+      final contentHeight = textHeight + subtitleHeight + fixedPadding;
+      // Use the larger of nominal height or scaled content height
+      return math.max(item.height, contentHeight);
+    }
+    // Dividers and labels don't contain user-facing scaled text
+    if (item is GlassMenuDivider) return item.height;
+    if (item is GlassMenuLabel) return item.height;
+    if (item is PreferredSizeWidget) return item.preferredSize.height;
+    return 44.0;
+  }
+
   @override
   State<GlassMenu> createState() => _GlassMenuState();
 }
@@ -417,7 +484,7 @@ class GlassMenuController {
   }
 
   /// Whether the menu's overlay is currently shown (open, or animating closed).
-  bool get isOpen => _state?._overlayController.isShowing ?? false;
+  bool get isOpen => _state?._isOverlayShowing ?? false;
 
   /// Opens the menu, morphing from the trigger's current position. Safe to call
   /// while a close is still animating — the spring reverses toward open.

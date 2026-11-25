@@ -19,12 +19,14 @@ class GlassMenuItem extends StatefulWidget {
     this.icon,
     this.isDestructive = false,
     this.trailing,
+    this.hasInteractiveTrailing = false,
     this.height = 44.0,
     this.subtitle,
     this.isPressed,
     this.isSelected = false,
     this.semanticsSelected,
     this.enabled = true,
+    this.disabledOpacity,
     this.titleStyle,
     this.subtitleStyle,
     this.iconColor,
@@ -33,6 +35,7 @@ class GlassMenuItem extends StatefulWidget {
     this.maxLines = 1,
     this.enablePressScale = true,
     this.closeDelay,
+    this.closeOnTap = true,
     this.submenu,
     this.semanticLabel,
   });
@@ -69,6 +72,9 @@ class GlassMenuItem extends StatefulWidget {
   /// A widget to display after the title (e.g., shortcut key).
   final Widget? trailing;
 
+  /// Routes row and trailing taps through the gesture arena.
+  final bool hasInteractiveTrailing;
+
   /// Height of the item.
   ///
   /// Defaults to 44.0 (standard iOS touch target).
@@ -90,6 +96,9 @@ class GlassMenuItem extends StatefulWidget {
 
   /// Whether the item should handle its own interactions.
   final bool enabled;
+
+  /// The opacity applied to the content of a disabled row.
+  final double? disabledOpacity;
 
   /// Custom text style for the title.
   final TextStyle? titleStyle;
@@ -139,6 +148,9 @@ class GlassMenuItem extends StatefulWidget {
   /// widget (e.g. a [GlassSwitch]) whose state transition should be visible
   /// before the menu morphs away.
   final Duration? closeDelay;
+
+  /// Whether activating this leaf closes the menu.
+  final bool closeOnTap;
 
   /// Child items shown when this item is activated inside a [GlassMenu].
   ///
@@ -382,7 +394,7 @@ class _GlassMenuItemState extends State<GlassMenuItem>
                 borderRadius: BorderRadius.circular(24),
               ),
               child: Opacity(
-                opacity: widget.enabled ? 1.0 : 0.4,
+                opacity: widget.enabled ? 1.0 : (widget.disabledOpacity ?? 0.4),
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     // A submenu row shows a chevron unless the caller supplied
