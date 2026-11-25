@@ -302,6 +302,7 @@ class _GlassSliderState extends State<GlassSlider>
   late AnimationController _thicknessController;
   late CurvedAnimation _thicknessCurve;
   late Animation<double> _thicknessAnimation;
+  final GestureArenaTeam _gestureTeam = GestureArenaTeam();
 
   @override
   void initState() {
@@ -555,8 +556,6 @@ class _GlassSliderState extends State<GlassSlider>
 
         final thumbHeight = _thumbHeight;
         final thumbWidth = _thumbWidth;
-        final baseMediaQuery =
-            MediaQuery.maybeOf(context) ?? const MediaQueryData();
         final isInteractive = widget.onChanged != null;
         final Widget sliderVisual = SizedBox(
           height: widget.thumbRadius * 2 + 16,
@@ -690,31 +689,59 @@ class _GlassSliderState extends State<GlassSlider>
           isHoveredNotifier: _isHovered,
           // Sliders are adjusted with arrow keys, Space/Enter don't activate them natively
           onKeyboardActivate: null,
-          child: MediaQuery(
-            data: baseMediaQuery.copyWith(
-              gestureSettings: const DeviceGestureSettings(touchSlop: 4.0),
-            ),
-            child: RepaintBoundary(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                dragStartBehavior: DragStartBehavior.down,
-                onTapUp: isInteractive
-                    ? (details) => _handleTapUp(details, constraints)
-                    : null,
-                onHorizontalDragDown: isInteractive ? _handleDragDown : null,
-                onHorizontalDragStart: isInteractive
-                    ? (details) => _handleDragStart(details, constraints)
-                    : null,
-                onHorizontalDragUpdate: isInteractive
-                    ? (details) => _handleDragUpdate(details, constraints)
-                    : null,
-                onHorizontalDragEnd: isInteractive ? _handleDragEnd : null,
-                onHorizontalDragCancel:
-                    isInteractive ? _handleDragCancel : null,
-                child: isInteractive
-                    ? sliderVisual
-                    : Opacity(opacity: 0.5, child: sliderVisual),
-              ),
+          child: RepaintBoundary(
+            child: RawGestureDetector(
+              behavior: HitTestBehavior.opaque,
+              gestures: isInteractive
+                  ? {
+                      HorizontalDragGestureRecognizer:
+                          GestureRecognizerFactoryWithHandlers<
+                              HorizontalDragGestureRecognizer>(
+                        () => HorizontalDragGestureRecognizer(
+                          debugOwner: this,
+                        )..team = _gestureTeam,
+                        (instance) {
+                          instance
+                            ..gestureSettings =
+                                const DeviceGestureSettings(touchSlop: 4.0)
+                            ..dragStartBehavior = DragStartBehavior.down
+                            ..onDown = _handleDragDown
+                            ..onStart = (details) {
+                              _handleDragStart(
+                                details,
+                                constraints,
+                              );
+                            }
+                            ..onUpdate = (details) {
+                              _handleDragUpdate(
+                                details,
+                                constraints,
+                              );
+                            }
+                            ..onEnd = _handleDragEnd
+                            ..onCancel = _handleDragCancel;
+                        },
+                      ),
+                      TapGestureRecognizer:
+                          GestureRecognizerFactoryWithHandlers<
+                              TapGestureRecognizer>(
+                        () => TapGestureRecognizer(debugOwner: this)
+                          ..team = _gestureTeam,
+                        (instance) {
+                          instance
+                            ..gestureSettings =
+                                const DeviceGestureSettings(touchSlop: 4.0)
+                            ..onTapUp = (details) => _handleTapUp(
+                                  details,
+                                  constraints,
+                                );
+                        },
+                      ),
+                    }
+                  : const {},
+              child: isInteractive
+                  ? sliderVisual
+                  : Opacity(opacity: 0.5, child: sliderVisual),
             ),
           ),
         );
