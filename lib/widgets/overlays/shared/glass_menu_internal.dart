@@ -671,6 +671,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
           ? GlassMenuMorph.openSimulation(
               _morphController.value,
               _morphController.velocity,
+              durationScale: widget.openDurationScale,
             )
           : null,
     );

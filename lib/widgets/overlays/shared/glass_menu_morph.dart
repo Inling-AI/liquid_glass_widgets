@@ -72,14 +72,25 @@ class GlassMenuMorph {
   );
 
   /// Creates a spring that carries momentum across interruptions.
-  static SpringSimulation openSimulation(double value, double velocity) =>
+  static SpringSimulation openSimulation(
+    double value,
+    double velocity, {
+    double durationScale = 1.0,
+  }) =>
       SpringSimulation(
-        spring,
+        SpringDescription(
+          mass: spring.mass,
+          stiffness: spring.stiffness / (durationScale * durationScale),
+          damping: spring.damping / durationScale,
+        ),
         value,
         1,
-        value == 0 ? 3.0 : velocity,
+        value == 0 ? 3.0 / durationScale : velocity,
         snapToEnd: true,
-        tolerance: _settleTolerance,
+        tolerance: Tolerance(
+          distance: _settleTolerance.distance,
+          velocity: _settleTolerance.velocity / durationScale,
+        ),
       );
 
   /// The return spring leaves a small undershoot for the trigger rebound.

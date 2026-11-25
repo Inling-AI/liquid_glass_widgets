@@ -298,6 +298,9 @@ class GlassMenu extends StatefulWidget {
   /// active and you want a single-frame transition without bouncing.
   final MorphSpeed morphSpeed;
 
+  /// Time scale applied to the opening spring.
+  final double openDurationScale;
+
   /// Whether to enable iOS-style continuous swipe-to-select.
   ///
   /// When true, pressing down on the trigger opens the menu immediately and
@@ -380,12 +383,14 @@ class GlassMenu extends StatefulWidget {
     this.morphFromZero = false,
     this.platformViewBackdrop = false,
     this.morphSpeed = MorphSpeed.normal,
+    this.openDurationScale = 1.0,
     this.enableContinuousSwipe = false,
     this.continuousSwipeSlop = 10.0,
     this.semanticLabel,
     this.menuSemanticLabel,
     this.onLevelChanged,
   })  : assert(maxStackHeight == null || maxStackHeight > 0),
+        assert(openDurationScale > 0),
         assert(trigger != null || triggerBuilder != null,
             'Either trigger or triggerBuilder must be provided');
 
