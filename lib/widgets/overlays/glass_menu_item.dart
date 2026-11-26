@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/cupertino.dart';
 import '../../theme/glass_theme.dart';
 import '../../types/glass_style.dart';
@@ -10,6 +12,16 @@ import '../shared/glass_interaction_state_mixin.dart';
 /// support for icons, labels, and "destructive" styling. It handles its own
 /// hover and tap interactions with liquid glass effects.
 class GlassMenuItem extends StatefulWidget {
+  static const _contentPadding =
+      EdgeInsets.symmetric(horizontal: 16, vertical: 8);
+  static const double _iconGap = 12;
+  static const double _submenuChevronSize = 16;
+  static const double _trailingWidth = 24;
+  static const _defaultTitleStyle =
+      TextStyle(fontSize: 17, fontWeight: FontWeight.w400);
+  static const _defaultSubtitleStyle =
+      TextStyle(fontSize: 13, fontWeight: FontWeight.w400);
+
   /// Creates a glass menu item.
   const GlassMenuItem({
     required this.title,
@@ -163,6 +175,98 @@ class GlassMenuItem extends StatefulWidget {
   ///
   /// When [trailing] is null a submenu item shows a chevron.
   final List<Widget>? submenu;
+
+  double get _minimumContentWidth =>
+      (icon == null ? 0.0 : iconSize + _iconGap) +
+      (trailing == null && submenu == null ? 0.0 : _trailingWidth);
+
+  /// Estimates this row's height before layout. [width] includes row padding.
+  double estimateHeight(BuildContext context, {double? width}) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final leadingSize = _estimateAccessorySize(
+      context,
+      icon,
+      Size.square(iconSize),
+    );
+    final trailingSize = trailing != null
+        ? _estimateAccessorySize(
+            context,
+            trailing,
+            const Size(_trailingWidth, 0),
+          )
+        : submenu != null
+            ? const Size.square(_submenuChevronSize)
+            : Size.zero;
+    final textWidth = width == null
+        ? null
+        : math.max(
+            0.0,
+            math.max(width - _contentPadding.horizontal, _minimumContentWidth) -
+                leadingSize.width -
+                (icon == null ? 0 : _iconGap) -
+                trailingSize.width,
+          );
+    final defaults = DefaultTextStyle.of(context);
+
+    double textHeight(String text, TextStyle style, int lines) {
+      if (textWidth == null) {
+        return scaler.scale(style.fontSize ?? defaults.style.fontSize ?? 14) *
+            1.2 *
+            lines;
+      }
+      var effectiveStyle = style.inherit ? defaults.style.merge(style) : style;
+      if (MediaQuery.boldTextOf(context)) {
+        effectiveStyle = effectiveStyle.merge(
+          const TextStyle(fontWeight: FontWeight.bold),
+        );
+      }
+      final painter = TextPainter(
+        text: TextSpan(text: text, style: effectiveStyle),
+        textDirection: Directionality.maybeOf(context) ?? TextDirection.ltr,
+        locale: Localizations.maybeLocaleOf(context),
+        textScaler: scaler,
+        textHeightBehavior: defaults.textHeightBehavior ??
+            DefaultTextHeightBehavior.maybeOf(context),
+        textWidthBasis: defaults.textWidthBasis,
+        maxLines: lines,
+        ellipsis: '\u2026',
+      )..layout(maxWidth: textWidth);
+      final height = painter.height;
+      painter.dispose();
+      return height;
+    }
+
+    final labelHeight = textHeight(
+            title, titleStyle ?? _defaultTitleStyle, maxLines) +
+        (subtitle == null
+            ? 0.0
+            : textHeight(subtitle!, subtitleStyle ?? _defaultSubtitleStyle, 1));
+    final contentHeight = math.max(
+        labelHeight, math.max(leadingSize.height, trailingSize.height));
+    return math.max(height, contentHeight + _contentPadding.vertical);
+  }
+
+  static Size _estimateAccessorySize(
+    BuildContext context,
+    Widget? accessory,
+    Size nominalSize,
+  ) {
+    return switch (accessory) {
+      null => Size.zero,
+      Icon(:final size, :final applyTextScaling) => Size.square(
+          (applyTextScaling ?? IconTheme.of(context).applyTextScaling ?? false)
+              ? MediaQuery.textScalerOf(context)
+                  .scale(size ?? nominalSize.width)
+              : size ?? nominalSize.width,
+        ),
+      SizedBox(:final width, :final height) => Size(
+          width != null && width.isFinite ? width : nominalSize.width,
+          height != null && height.isFinite ? height : nominalSize.height,
+        ),
+      PreferredSizeWidget(:final preferredSize) => preferredSize,
+      _ => nominalSize,
+    };
+  }
 
   @override
   State<GlassMenuItem> createState() => _GlassMenuItemState();
@@ -388,7 +492,7 @@ class _GlassMenuItemState extends State<GlassMenuItem>
                       milliseconds: 150), // Smooth fade out on release
               curve: Curves.easeOutCubic,
               constraints: BoxConstraints(minHeight: widget.height),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: GlassMenuItem._contentPadding,
               decoration: BoxDecoration(
                 color: backgroundColor,
                 borderRadius: BorderRadius.circular(24),
@@ -403,7 +507,7 @@ class _GlassMenuItemState extends State<GlassMenuItem>
                         (widget.submenu != null
                             ? Icon(
                                 CupertinoIcons.chevron_right,
-                                size: 16,
+                                size: GlassMenuItem._submenuChevronSize,
                                 color: iconColor.withValues(alpha: 0.6),
                               )
                             : null);
@@ -418,7 +522,7 @@ class _GlassMenuItemState extends State<GlassMenuItem>
                             ),
                             child: widget.icon!,
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: GlassMenuItem._iconGap),
                         ],
 
                         // Text Content (Title & Subtitle)
@@ -432,11 +536,8 @@ class _GlassMenuItemState extends State<GlassMenuItem>
                                 maxLines: widget.maxLines,
                                 overflow: TextOverflow.ellipsis,
                                 style: widget.titleStyle ??
-                                    TextStyle(
-                                      color: textColor,
-                                      fontSize: 17,
-                                      fontWeight: FontWeight.w400,
-                                    ),
+                                    GlassMenuItem._defaultTitleStyle
+                                        .copyWith(color: textColor),
                               ),
                               if (widget.subtitle != null)
                                 Text(
@@ -444,10 +545,9 @@ class _GlassMenuItemState extends State<GlassMenuItem>
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: widget.subtitleStyle ??
-                                      TextStyle(
+                                      GlassMenuItem._defaultSubtitleStyle
+                                          .copyWith(
                                         color: textColor.withValues(alpha: 0.6),
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w400,
                                       ),
                                 ),
                             ],
@@ -460,10 +560,7 @@ class _GlassMenuItemState extends State<GlassMenuItem>
                     );
 
                     if (constraints.hasBoundedWidth) {
-                      final double minRequired = (widget.icon != null
-                              ? (widget.iconSize + 12.0)
-                              : 0.0) +
-                          (trailing != null ? 24.0 : 0.0);
+                      final minRequired = widget._minimumContentWidth;
                       if (constraints.maxWidth < minRequired) {
                         return OverflowBox(
                           alignment: Alignment.centerLeft,

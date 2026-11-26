@@ -73,6 +73,8 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   bool _swipeArmed = false;
   bool _openedOnPointerDown = false;
   final GlobalKey _menuContentKey = GlobalKey();
+  var _estimatedRows = Expando<List<_MenuRowGeometry>>();
+  var _measuredRows = Expando<List<_MenuRowGeometry>>();
 
   // --- Granular Update System (Performance + No flicker) ---
   // We cache the outer list but use notifiers to update selection state
@@ -116,6 +118,10 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   @override
   void didUpdateWidget(GlassMenu oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.menuWidth != oldWidget.menuWidth) {
+      _estimatedRows = Expando();
+      _measuredRows = Expando();
+    }
     if (!identical(widget.controller, oldWidget.controller)) {
       oldWidget.controller?._detach(this);
       widget.controller?._attach(this);
@@ -221,6 +227,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _estimatedRows = Expando();
     // Sync the reduced-motion accessibility flag to the morph controller.
     // This fires on first build and again whenever MediaQuery changes
     // (e.g. user toggles Reduce Motion in Settings while the app is running).
@@ -829,17 +836,16 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     final sourceList = _items;
     final sourceIndex = sourceList.indexOf(parent);
     if (sourceIndex < 0) return;
-    final sourceOffset = _listRowTop(sourceIndex, sourceList) -
-        (_scrollController.hasClients ? _scrollController.offset : 0.0);
+    final sourceRow = _rowGeometry(sourceList)[sourceIndex];
+    final scrollOffset = _listScrollOffset;
     final list = _levelList(parent, _submenuStack.length + 1);
     _updateMenu(() {
       _submenuStack.add(_SubmenuLevel(
         list: list,
         sourceIndex: sourceIndex,
-        sourceRowTop: sourceOffset,
-        sourceScrollOffset:
-            _scrollController.hasClients ? _scrollController.offset : 0.0,
-        sourceRowHeight: _getScaledItemHeight(parent, context),
+        sourceRowTop: sourceRow.top - scrollOffset,
+        sourceScrollOffset: scrollOffset,
+        sourceRowHeight: sourceRow.height,
       ));
       _cachedWrappedItems = null;
       _hoveredIndex = null;
@@ -921,6 +927,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     } else {
       _overlayController.hide();
     }
+    _measuredRows = Expando();
     // Reset screen-edge clamping offsets so stale values from a previous
     // open position don't bleed into the next open cycle.
     _horizontalOffset = 0.0;
@@ -1050,7 +1057,8 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     final recededParent = _scaleLevelRect(parentRect, _kRecedeScale);
     final rowCentreY = recededParent.top +
         (level.sourceRowTop + level.sourceRowHeight / 2) * _kRecedeScale;
-    final headerHeight = _getScaledItemHeight(level.list.first, context);
+    final rows = _rowGeometry(level.list);
+    final headerHeight = rows.first.height;
     var height = _visibleListHeight(level.list);
     var top = rowCentreY - _kBodyVerticalPadding - headerHeight / 2;
     final root = _restingBodyOverlayRect();
@@ -1058,8 +1066,10 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     if (_growsDown) {
       // Keep a header and the first child reachable even if the source row
       // is at the very bottom of a tall/scrolled ancestor.
-      final minimumViewport =
-          math.min(height, _listHeight(level.list.take(3).toList()));
+      final minimumViewport = math.min(
+        height,
+        _menuRowsHeight(rows[math.min(2, rows.length - 1)]),
+      );
       top = math.max(parentRect.top, top);
       top = math.min(top, root.top + budget - minimumViewport);
       height = math.min(height, root.top + budget - top);
@@ -1116,19 +1126,14 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   ) {
     final level = _submenuStack[levelIndex];
     final isTop = levelIndex == _submenuStack.length - 1;
-    final dimmed = !isTop;
     final shape = LiquidRoundedRectangle(
       borderRadius: widget.menuBorderRadius,
     );
     final cardContent = _buildListContent(
       level.list,
-      interactive: isTop,
-      dimmed: dimmed,
-      coveredDepth: dimmed ? levelIndex + 1 : null,
+      coveredDepth: isTop ? null : levelIndex + 1,
       coverProgress: _coverProgress(levelIndex + 1),
       viewportHeight: _cardRect(levelIndex).height,
-      passiveScrollOffset:
-          isTop ? 0.0 : _submenuStack[levelIndex + 1].sourceScrollOffset,
     );
     // Fade the arriving/departing card through the glass visibility channel,
     // never layer opacity: an Opacity ancestor stops the backdrop blur, so the
@@ -1295,24 +1300,46 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
         depth == 0 ? _restingBodyOverlayRect() : _cardRect(depth - 1);
     final receded = _scaleLevelRect(parentRect, _kRecedeScale);
     final card = _cardRect(depth);
-    final centre = _listRowTop(index, items) +
-        _getScaledItemHeight(items[index], context) / 2 -
-        _submenuStack[depth].sourceScrollOffset;
+    final row = _rowGeometry(items)[index];
+    final centre =
+        row.top + row.height / 2 - _submenuStack[depth].sourceScrollOffset;
     final y = receded.top + centre * _kRecedeScale;
     return y > card.top && y < card.bottom;
   }
 
-  /// Vertical offset of row [index] from its list's top (body padding included).
-  double _listRowTop(int index, List<Widget> list) {
-    var offset = _kBodyVerticalPadding;
-    for (var i = 0; i < index && i < list.length; i++) {
-      offset += _getScaledItemHeight(list[i], context) + _kRowGap;
-    }
-    return offset;
-  }
+  List<_MenuRowGeometry> _rowGeometry(List<Widget> list) =>
+      _measuredRows[list] ??
+      (_estimatedRows[list] ??=
+          GlassMenu._estimateRows(context, list, widget.menuWidth).toList());
 
   double _listHeight(List<Widget> list) =>
-      GlassMenu.estimateContentHeight(context, list);
+      _menuRowsHeight(_rowGeometry(list).lastOrNull);
+
+  double get _listScrollOffset =>
+      _scrollController.hasClients ? _scrollController.offset : 0.0;
+
+  void _recordRowGeometry(List<Widget> items, RenderFlex column) {
+    final rows = <_MenuRowGeometry>[
+      for (var row = column.firstChild;
+          row != null;
+          row = column.childAfter(row))
+        (
+          top: _kBodyVerticalPadding +
+              (row.parentData! as FlexParentData).offset.dy,
+          height: row.size.height,
+        ),
+    ];
+    final previous = _measuredRows[items] ?? _estimatedRows[items];
+    _measuredRows[items] = rows;
+    if (previous != null &&
+        previous.length == rows.length &&
+        Iterable<int>.generate(rows.length).every((i) =>
+            (rows[i].top - previous[i].top).abs() < 0.01 &&
+            (rows[i].height - previous[i].height).abs() < 0.01)) {
+      return;
+    }
+    if (mounted && _isOverlayShowing) _updateMenu(() {});
+  }
 
   /// The resting height of the whole visible stack, measured from the body's
   /// anchored edge the way the menu grows: the body's own receded extent, plus
@@ -1772,13 +1799,9 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
         simplifyContent: widget.opaqueColor != null,
         child: _buildListContent(
           widget.items,
-          interactive: interactive,
-          dimmed: !interactive,
           coveredDepth: interactive ? null : 0,
           coverProgress: _bodyRecede,
           viewportHeight: morph.menuSize.height,
-          passiveScrollOffset:
-              interactive ? 0.0 : _submenuStack.first.sourceScrollOffset,
         ),
       ),
     );
@@ -1786,67 +1809,76 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
 
   /// One menu list (the body's, or a card's): the sliding selection pill, the
   /// pointer [Listener] that drives slide-to-select, and the rows — wrapped
-  /// and interactive, or plain and inert when [dimmed] (a covered level).
+  /// and interactive, or plain and inert when [coveredDepth] is set.
   ///
   /// The [_menuContentKey] lives on whatever list is INTERACTIVE: the body's
   /// at level 0, the top card's otherwise. It moves between them in the same
   /// build, so a glide maps into the list the finger is actually over.
   Widget _buildListContent(
     List<Widget> items, {
-    required bool interactive,
-    required bool dimmed,
     double coverProgress = 0.0,
     required double viewportHeight,
-    double passiveScrollOffset = 0.0,
     int? coveredDepth,
   }) {
     final coveredOpacity =
         coveredDepth == null ? 1.0 : _coveredRowOpacity(coveredDepth);
-    final rows = Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SizedBox(height: _kBodyVerticalPadding),
-        for (var i = 0; i < items.length; i++) ...[
-          Opacity(
-            opacity:
-                coveredDepth != null && _isCoveredRow(coveredDepth, i, items)
+    final rows = Padding(
+      padding: const EdgeInsets.symmetric(vertical: _kBodyVerticalPadding),
+      child: _MeasureMenuRows(
+        items: items,
+        onLayout: _recordRowGeometry,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          spacing: _kRowGap,
+          children: [
+            for (var i = 0; i < items.length; i++)
+              Opacity(
+                opacity: coveredDepth != null &&
+                        _isCoveredRow(coveredDepth, i, items)
                     ? coveredOpacity
                     : 1.0,
-            child: interactive ? _buildWrappedItems()[i] : items[i],
-          ),
-          if (i < items.length - 1) const SizedBox(height: _kRowGap),
-        ],
-        const SizedBox(height: _kBodyVerticalPadding),
-      ],
+                child:
+                    coveredDepth == null ? _buildWrappedItems()[i] : items[i],
+              ),
+          ],
+        ),
+      ),
     );
     final listBody = SizedBox(
+      key: coveredDepth == null ? _menuContentKey : null,
       width: widget.menuWidth,
       height: viewportHeight,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: interactive
+        padding:
+            const EdgeInsets.symmetric(horizontal: _kBodyHorizontalPadding),
+        child: coveredDepth == null
             ? SingleChildScrollView(
                 controller: _scrollController,
                 primary: false,
                 physics: _isScrollable
                     ? const ClampingScrollPhysics()
                     : const NeverScrollableScrollPhysics(),
-                child: rows,
+                child: Stack(children: [_buildSelectionPill(items), rows]),
               )
             : ClipRect(
                 child: OverflowBox(
-                alignment: Alignment.topCenter,
-                maxHeight: double.infinity,
-                child: Transform.translate(
-                    offset: Offset(0, -passiveScrollOffset), child: rows),
-              )),
+                  alignment: Alignment.topCenter,
+                  maxHeight: double.infinity,
+                  child: Transform.translate(
+                    offset: Offset(
+                      0,
+                      -_submenuStack[coveredDepth].sourceScrollOffset,
+                    ),
+                    child: rows,
+                  ),
+                ),
+              ),
       ),
     );
 
-    if (dimmed) {
-      // A covered level: dimmed, inert, and tapping its visible part closes
-      // the card over it (native iOS behavior) without running anything.
+    if (coveredDepth != null) {
+      // Tapping a visible part of a covered card collapses its submenu.
       return Opacity(
         opacity: lerpDouble(1.0, _kDimmedOpacity, coverProgress)!,
         child: GestureDetector(
@@ -1860,140 +1892,120 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
     }
 
     return AbsorbPointer(
-        absorbing: _contentMorph.isAnimating,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            // Sliding selection pill (background)
-            ValueListenableBuilder<int?>(
-              valueListenable: _hoveredIndexNotifier,
-              builder: (context, hoveredIndex, _) {
-                if (hoveredIndex == null) {
-                  return const SizedBox.shrink();
-                }
-                final isDark =
-                    GlassTheme.brightnessOf(context) == Brightness.dark;
-                final style =
-                    GlassTheme.maybeOf(context)?.data.style ?? GlassStyle.ios27;
-                final effectiveSelectionColor =
-                    widget.selectionColor != const Color(0x3DFFFFFF)
-                        ? widget.selectionColor
-                        : (style == GlassStyle.classic || isDark)
-                            ? widget.selectionColor
-                            : const Color(0x14000000);
-                return AnimatedPositioned(
-                  duration: const Duration(milliseconds: 150),
-                  curve: Curves.easeOutCubic,
-                  left: 12,
-                  right: 12,
-                  top: _listRowTop(hoveredIndex, items) -
-                      (_scrollController.hasClients
-                          ? _scrollController.offset
-                          : 0.0),
-                  height: _getScaledItemHeight(items[hoveredIndex], context),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: effectiveSelectionColor,
-                      borderRadius:
-                          BorderRadius.circular(widget.itemBorderRadius),
-                      border: Border.all(
-                        color: isDark
-                            ? const Color(0x0DFFFFFF)
-                            : const Color(0x0D000000),
-                        width: 0.5,
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-            MouseRegion(
-              // A mouse resting on a row moves the selection pill there, the
-              // same highlight a press-and-slide shows. The rows' own hover
-              // fill is a white wash meant for dark glass and disappears on
-              // light glass, so without this a pointer gets no hover at all.
-              onExit: (_) {
-                if (!mounted || _isDragging) return;
-                _hoveredIndex = null;
-                _hoveredIndexNotifier.value = null;
-              },
-              child: Listener(
-                onPointerHover: (event) {
-                  if (!mounted || _isDragging) return;
-                  final index =
-                      _calculateIndexFromPosition(event.localPosition, context);
-                  _hoveredIndex = index;
-                  _hoveredIndexNotifier.value = index;
-                },
-                onPointerDown: (event) {
-                  if (!mounted) return;
-                  _isDragging = true;
-                  _isDraggingNotifier.value = true;
-                  _hasStretched = false;
-                  _initialScrollOffset = _scrollController.hasClients
-                      ? _scrollController.offset
-                      : 0.0;
-                  _updateHoveredIndex(event.localPosition);
-                },
-                onPointerMove: (event) {
-                  if (!mounted) return;
-                  if (_isDragging) {
-                    _updateHoveredIndex(event.localPosition);
-                  }
-                },
-                onPointerUp: (event) {
-                  if (!mounted) return;
-                  // The row's own tap recogniser fires later in this same dispatch;
-                  // it must not activate the row a second time (see
-                  // _buildWrappedItems).
-                  _bodyPointerUpHandled = true;
-                  scheduleMicrotask(() => _bodyPointerUpHandled = false);
-                  if (_isDragging) {
-                    final currentOffset = _scrollController.hasClients
-                        ? _scrollController.offset
-                        : 0.0;
-                    final scrollDisplacement =
-                        (currentOffset - _initialScrollOffset).abs();
+      absorbing: _contentMorph.isAnimating,
+      child: MouseRegion(
+        // A mouse resting on a row moves the selection pill there, the
+        // same highlight a press-and-slide shows. The rows' own hover
+        // fill is a white wash meant for dark glass and disappears on
+        // light glass, so without this a pointer gets no hover at all.
+        onExit: (_) {
+          if (!mounted || _isDragging) return;
+          _hoveredIndex = null;
+          _hoveredIndexNotifier.value = null;
+        },
+        child: Listener(
+          onPointerHover: (event) {
+            if (!mounted || _isDragging) return;
+            final index = _calculateIndexFromPosition(event.localPosition);
+            _hoveredIndex = index;
+            _hoveredIndexNotifier.value = index;
+          },
+          onPointerDown: (event) {
+            if (!mounted) return;
+            _isDragging = true;
+            _isDraggingNotifier.value = true;
+            _hasStretched = false;
+            _initialScrollOffset = _listScrollOffset;
+            _updateHoveredIndex(event.localPosition);
+          },
+          onPointerMove: (event) {
+            if (!mounted) return;
+            if (_isDragging) {
+              _updateHoveredIndex(event.localPosition);
+            }
+          },
+          onPointerUp: (event) {
+            if (!mounted) return;
+            // The row's own tap recogniser fires later in this same dispatch;
+            // it must not activate the row a second time (see
+            // _buildWrappedItems).
+            _bodyPointerUpHandled = true;
+            scheduleMicrotask(() => _bodyPointerUpHandled = false);
+            if (_isDragging) {
+              final currentOffset = _listScrollOffset;
+              final scrollDisplacement =
+                  (currentOffset - _initialScrollOffset).abs();
 
-                    // Slide-to-select logic (for non-scrollable menus, tap or
-                    // slide-and-release).
-                    if (scrollDisplacement < 10 && !_isScrollable) {
-                      final indexToTap = _hoveredIndex ??
-                          _calculateIndexFromPosition(
-                              event.localPosition, context);
-                      if (indexToTap != null) {
-                        final item = _items[indexToTap];
-                        if (item is GlassMenuItem &&
-                            item.enabled &&
-                            !item.hasInteractiveTrailing) {
-                          _activateItem(item);
-                        }
-                      }
-                    }
-                    _isDragging = false;
-                    _isDraggingNotifier.value = false;
-                    _hoveredIndex = null;
-                    _hoveredIndexNotifier.value = null;
-                    _hasStretched = false;
+              // Slide-to-select logic (for non-scrollable menus, tap or
+              // slide-and-release).
+              if (scrollDisplacement < 10 && !_isScrollable) {
+                final indexToTap = _hoveredIndex ??
+                    _calculateIndexFromPosition(event.localPosition);
+                if (indexToTap != null) {
+                  final item = _items[indexToTap];
+                  if (item is GlassMenuItem &&
+                      item.enabled &&
+                      !item.hasInteractiveTrailing) {
+                    _activateItem(item);
                   }
-                },
-                onPointerCancel: (_) {
-                  if (!mounted) return;
-                  _isDragging = false;
-                  _isDraggingNotifier.value = false;
-                  _hoveredIndex = null;
-                  _hoveredIndexNotifier.value = null;
-                },
-                child: SizedBox(
-                  key: interactive ? _menuContentKey : null,
-                  width: widget.menuWidth,
-                  height: viewportHeight,
-                  child: listBody.child!,
-                ),
+                }
+              }
+              _isDragging = false;
+              _isDraggingNotifier.value = false;
+              _hoveredIndex = null;
+              _hoveredIndexNotifier.value = null;
+              _hasStretched = false;
+            }
+          },
+          onPointerCancel: (_) {
+            if (!mounted) return;
+            _isDragging = false;
+            _isDraggingNotifier.value = false;
+            _hoveredIndex = null;
+            _hoveredIndexNotifier.value = null;
+          },
+          child: listBody,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSelectionPill(List<Widget> items) {
+    return ValueListenableBuilder<int?>(
+      valueListenable: _hoveredIndexNotifier,
+      builder: (context, hoveredIndex, _) {
+        if (hoveredIndex == null) return const SizedBox.shrink();
+        final isDark = GlassTheme.brightnessOf(context) == Brightness.dark;
+        final style =
+            GlassTheme.maybeOf(context)?.data.style ?? GlassStyle.ios27;
+        final effectiveSelectionColor =
+            widget.selectionColor == GlassMenu.defaultSelectionColor &&
+                    style != GlassStyle.classic &&
+                    !isDark
+                ? const Color(0x14000000)
+                : widget.selectionColor;
+        final row = _rowGeometry(items)[hoveredIndex];
+        return AnimatedPositioned(
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOutCubic,
+          left: 0,
+          right: 0,
+          top: row.top,
+          height: row.height,
+          child: Container(
+            decoration: BoxDecoration(
+              color: effectiveSelectionColor,
+              borderRadius: BorderRadius.circular(widget.itemBorderRadius),
+              border: Border.all(
+                color:
+                    isDark ? const Color(0x0DFFFFFF) : const Color(0x0D000000),
+                width: 0.5,
               ),
             ),
-          ],
-        ));
+          ),
+        );
+      },
+    );
   }
 
   List<Widget> _buildWrappedItems() {
@@ -2090,18 +2102,11 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
   double _visibleListHeight(List<Widget> items) =>
       math.min(_listHeight(items), _maximumStackHeight);
 
-  double _getScaledItemHeight(Widget item, BuildContext context) =>
-      GlassMenu._scaledItemHeight(
-        item,
-        MediaQuery.maybeTextScalerOf(context) ?? TextScaler.noScaling,
-      );
-
-  int? _calculateIndexFromPosition(Offset localPosition, BuildContext context) {
+  int? _calculateIndexFromPosition(Offset localPosition) {
     final visibleHeight = _activeHeight;
     final x = localPosition.dx;
     final dy = localPosition.dy;
-    final y =
-        dy + (_scrollController.hasClients ? _scrollController.offset : 0.0);
+    final y = dy + _listScrollOffset;
 
     final isWithinActiveZone = x > -20 &&
         x < widget.menuWidth + 20 &&
@@ -2110,21 +2115,16 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
 
     if (!isWithinActiveZone) return null;
 
-    double currentOffset = 12.0;
-    for (int i = 0; i < _items.length; i++) {
-      final item = _items[i];
-      final itemHeight = _getScaledItemHeight(item, context);
-
-      // Rows own half of each 2 px gap on either side, so the hit zones are
-      // contiguous: a release between two rows activates the nearer row
-      // instead of silently doing nothing.
-      if (y >= currentOffset - 1.0 && y < currentOffset + itemHeight + 1.0) {
-        if (item is GlassMenuItem && item.enabled) {
-          return i;
-        }
-        break;
+    final items = _items;
+    final rows = _rowGeometry(items);
+    const halfGap = _kRowGap / 2;
+    for (var i = 0; i < rows.length; i++) {
+      final row = rows[i];
+      // Rows share each gap evenly.
+      if (y >= row.top - halfGap && y < row.top + row.height + halfGap) {
+        final item = items[i];
+        return item is GlassMenuItem && item.enabled ? i : null;
       }
-      currentOffset += itemHeight + 2.0; // height + 2px gap
     }
     return null;
   }
@@ -2150,7 +2150,7 @@ class _GlassMenuState extends State<GlassMenu> with TickerProviderStateMixin {
 
     // Only calculate hover selection for non-scrollable menus (slide-to-select).
     if (!_isScrollable) {
-      detectedIndex = _calculateIndexFromPosition(localPosition, context);
+      detectedIndex = _calculateIndexFromPosition(localPosition);
     }
 
     _hoveredIndex = detectedIndex;
@@ -2192,8 +2192,63 @@ class _SelectionItemWrapper extends StatelessWidget {
 
 const Duration _kSubmenuMorphDuration = Duration(milliseconds: 320);
 const Curve _kSubmenuMorphCurve = Curves.easeOutCubic;
+const double _kBodyHorizontalPadding = 12.0;
 const double _kBodyVerticalPadding = 12.0;
 const double _kRowGap = 2.0;
+
+typedef _MenuRowGeometry = ({double top, double height});
+
+double _menuRowsHeight(_MenuRowGeometry? last) => last == null
+    ? 2 * _kBodyVerticalPadding
+    : last.top + last.height + _kBodyVerticalPadding;
+
+/// Reports row offsets in scroll content coordinates after the flex lays out.
+class _MeasureMenuRows extends SingleChildRenderObjectWidget {
+  const _MeasureMenuRows({
+    required this.items,
+    required this.onLayout,
+    required super.child,
+  });
+
+  final List<Widget> items;
+  final void Function(List<Widget>, RenderFlex) onLayout;
+
+  @override
+  _RenderMenuRows createRenderObject(BuildContext context) =>
+      _RenderMenuRows(items, onLayout);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderMenuRows renderObject) {
+    renderObject
+      ..onLayout = onLayout
+      ..items = items;
+  }
+}
+
+class _RenderMenuRows extends RenderProxyBox {
+  _RenderMenuRows(this._items, this.onLayout);
+
+  List<Widget> _items;
+  void Function(List<Widget>, RenderFlex) onLayout;
+  bool _measurementScheduled = false;
+
+  set items(List<Widget> value) {
+    if (identical(_items, value)) return;
+    _items = value;
+    markNeedsLayout();
+  }
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    if (_measurementScheduled) return;
+    _measurementScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _measurementScheduled = false;
+      if (attached) onLayout(_items, child! as RenderFlex);
+    });
+  }
+}
 
 const LiquidGlassSettings _kDefaultMenuSettings = LiquidGlassSettings(
   blur: 10,

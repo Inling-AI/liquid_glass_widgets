@@ -2,6 +2,7 @@ import 'dart:async' show scheduleMicrotask;
 import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import '../../src/utils/glass_localizations.dart';
@@ -201,6 +202,7 @@ class GlassMenu extends StatefulWidget {
   /// Custom color for the menu selection background.
   final Color selectionColor;
 
+  /// Base selection fill, adapted to the active glass style and brightness.
   static const defaultSelectionColor = Color(0x3DFFFFFF);
 
   /// A flat fill for the menu panel and its submenu cards, drawn instead of
@@ -415,50 +417,33 @@ class GlassMenu extends StatefulWidget {
 
   /// Layout height of the rows, vertical padding and gaps before viewport clamping.
   static double estimateContentHeight(
-      BuildContext context, List<Widget> items) {
-    final textScaler =
-        MediaQuery.maybeTextScalerOf(context) ?? TextScaler.noScaling;
-    var height = 2.0 * _kBodyVerticalPadding;
-    for (var i = 0; i < items.length; i++) {
-      height += _scaledItemHeight(items[i], textScaler);
-      if (i < items.length - 1) height += _kRowGap;
-    }
-    return height;
+    BuildContext context,
+    List<Widget> items, {
+    double? menuWidth,
+  }) {
+    return _menuRowsHeight(_estimateRows(context, items, menuWidth).lastOrNull);
   }
 
-  /// Accounts for system text scaling.
-  ///
-  /// When the user increases the system text size, GlassMenuItem renders
-  /// with scaled text inside a ConstrainedBox (minHeight). The text content
-  /// may push the actual height beyond the nominal [GlassMenuItem.height].
-  /// This method estimates the rendered height to prevent the menu from
-  /// becoming scrollable when it shouldn't be.
-  static double _scaledItemHeight(Widget item, TextScaler textScaler) {
-    if (item is GlassMenuItem) {
-      // The item has 8px vertical padding top + bottom = 16px fixed chrome.
-      // The remaining space is text content that scales with system text size.
-      const fixedPadding = 16.0;
-      final baseFontSize = item.titleStyle?.fontSize ?? 17.0;
-      final scaledFontSize = textScaler.scale(baseFontSize);
-      final lineHeight = scaledFontSize * 1.2; // Approximate line height
-      final textHeight = lineHeight * item.maxLines;
-
-      // Subtitle adds another scaled line
-      double subtitleHeight = 0;
-      if (item.subtitle != null) {
-        final subFontSize = item.subtitleStyle?.fontSize ?? 13.0;
-        subtitleHeight = textScaler.scale(subFontSize) * 1.2;
-      }
-
-      final contentHeight = textHeight + subtitleHeight + fixedPadding;
-      // Use the larger of nominal height or scaled content height
-      return math.max(item.height, contentHeight);
+  static Iterable<_MenuRowGeometry> _estimateRows(
+    BuildContext context,
+    List<Widget> items,
+    double? menuWidth,
+  ) sync* {
+    final rowWidth = menuWidth == null
+        ? null
+        : math.max(0.0, menuWidth - 2 * _kBodyHorizontalPadding);
+    var top = _kBodyVerticalPadding;
+    for (final item in items) {
+      final height = switch (item) {
+        GlassMenuItem() => item.estimateHeight(context, width: rowWidth),
+        GlassMenuDivider() => item.height,
+        GlassMenuLabel() => item.height,
+        PreferredSizeWidget(:final preferredSize) => preferredSize.height,
+        _ => 44.0,
+      };
+      yield (top: top, height: height);
+      top += height + _kRowGap;
     }
-    // Dividers and labels don't contain user-facing scaled text
-    if (item is GlassMenuDivider) return item.height;
-    if (item is GlassMenuLabel) return item.height;
-    if (item is PreferredSizeWidget) return item.preferredSize.height;
-    return 44.0;
   }
 
   @override
